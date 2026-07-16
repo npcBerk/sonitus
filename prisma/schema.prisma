@@ -38,6 +38,7 @@ model Asset {
   currentMarketCap Float        @default(0) @map("current_market_cap")
   currentVolume    Float        @default(0) @map("current_volume")
   lastPrice        Float        @default(0) @map("last_price")
+  isActive         Boolean      @default(true) @map("is_active")
   sparkline        Float[]
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
@@ -45,6 +46,7 @@ model Asset {
 
   @@index([symbol])
   @@index([rank])
+  @@index([isActive, rank])
   @@map("assets")
 }
 
@@ -62,6 +64,7 @@ model AssetMetric {
   createdAt        DateTime @default(now()) @map("created_at")
 
   @@index([assetId, capturedAt])
+  @@unique([assetId, capturedAt])
   @@map("asset_metrics")
 }
 

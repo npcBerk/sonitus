@@ -11,6 +11,10 @@ function volatilityScore(asset: Asset) {
   return Math.abs(asset.change1h) * 1.35 + Math.abs(asset.change24h) * 0.95 + Math.abs(asset.volumeDelta24h) * 0.18;
 }
 
+function volumeMarketCapRatio(asset: Asset) {
+  return asset.currentMarketCap > 0 ? asset.currentVolume / asset.currentMarketCap : 0;
+}
+
 export function AssetsTable({ assets }: AssetsTableProps) {
   return (
     <section className="sonitus-panel overflow-hidden">
@@ -58,7 +62,7 @@ export function AssetsTable({ assets }: AssetsTableProps) {
                 <td className="px-5 py-4 text-sm text-slate-100">{formatCompactCurrency(asset.currentVolume)}</td>
                 <td className="px-5 py-4 text-sm text-slate-100">{formatCompactCurrency(asset.currentMarketCap)}</td>
                 <td className="px-5 py-4 text-sm text-slate-200">
-                  {(asset.currentVolume / asset.currentMarketCap).toFixed(3)}
+                  {volumeMarketCapRatio(asset).toFixed(3)}
                 </td>
                 <td className={`px-5 py-4 text-sm font-medium ${asset.volumeDelta24h >= 0 ? "text-emerald-300" : "text-amber-300"}`}>
                   {formatSignedPercent(asset.volumeDelta24h)}

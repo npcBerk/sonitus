@@ -58,7 +58,20 @@ export type DashboardPayload = {
 export type DashboardFilters = {
   query: string;
   category: string;
-  sort: string;
+  sort: "volume" | "change24h" | "volatility" | "marketCap" | "volumeDelta" | "name";
   minMarketCap: number;
   minVolume: number;
+};
+
+export type ServiceHealth = {
+  ok: boolean;
+  status: "healthy" | "degraded" | "unhealthy";
+  checkedAt: string;
+  dataMode: "database" | "mock";
+  checks: {
+    database: "healthy" | "unavailable" | "disabled";
+    redis: "healthy" | "unavailable" | "disabled";
+    worker: "healthy" | "stale" | "failed" | "unknown";
+  };
+  latestScan: ScanJob | null;
 };

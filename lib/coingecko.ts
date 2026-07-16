@@ -1,43 +1,40 @@
+import { z } from "zod";
+
+import { getRuntimeConfig } from "./config";
+import { logger } from "./logger";
+
 type CoinGeckoApiMode = "public" | "demo" | "pro";
 
-type CoinGeckoMarketCoin = {
-  id: string;
-  symbol: string;
-  name: string;
-  image: string;
-  current_price: number;
-  market_cap: number;
-  total_volume: number;
-  market_cap_rank: number | null;
-  price_change_percentage_1h_in_currency: number | null;
-  price_change_percentage_24h_in_currency: number | null;
-  price_change_percentage_7d_in_currency: number | null;
-  sparkline_in_7d?: {
-    price: number[];
-  };
-  last_updated: string;
-};
+const marketCoinSchema = z.object({
+  id: z.string().min(1),
+  symbol: z.string().min(1),
+  name: z.string().min(1),
+  image: z.string().nullish(),
+  current_price: z.number().finite().nonnegative().nullish(),
+  market_cap: z.number().finite().nonnegative().nullish(),
+  total_volume: z.number().finite().nonnegative().nullish(),
+  market_cap_rank: z.number().int().nonnegative().nullish(),
+  price_change_percentage_1h_in_currency: z.number().finite().nullish(),
+  price_change_percentage_24h_in_currency: z.number().finite().nullish(),
+  sparkline_in_7d: z.object({ price: z.array(z.number().finite()) }).nullish(),
+  last_updated: z.string().datetime({ offset: true })
+});
 
-type CoinGeckoCategoryMarket = {
-  id: string;
-  name: string;
-  market_cap: number;
-  market_cap_change_24h: number;
-  volume_24h: number;
-  updated_at: string;
-  top_3_coins_id: string[];
-  top_3_coins: string[];
-};
+const categoryMarketSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  market_cap_change_24h: z.number().finite().nullish(),
+  updated_at: z.string().datetime({ offset: true }).nullish()
+});
 
-type CoinGeckoCoinDetail = {
-  id: string;
-  categories: string[];
-  image: {
-    thumb: string;
-    small: string;
-    large: string;
-  };
-};
+const coinDetailSchema = z.object({
+  categories: z.array(z.string()),
+  image: z.object({
+    thumb: z.string().nullish(),
+    small: z.string().nullish(),
+    large: z.string().nullish()
+  })
+});
 
 export type LiveCoin = {
   providerId: string;
@@ -75,6 +72,17 @@ export type LiveSnapshot = {
 const DEFAULT_BASE_URL = "https://api.coingecko.com/api/v3";
 const GENERIC_CATEGORY_NAMES = new Set(["cryptocurrency", "token", "coin", "stablecoin"]);
 
+class ProviderHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly retryAfterMs?: number
+  ) {
+    super(message);
+    this.name = "ProviderHttpError";
+  }
+}
+
 function canonicalCategoryName(name: string) {
   return name.replace(/\([^)]*\)/g, "").trim();
 }
@@ -87,57 +95,76 @@ function slugifyCategoryName(name: string) {
 }
 
 function isGenericCategory(name: string) {
-  const canonical = canonicalCategoryName(name).toLowerCase();
-  return GENERIC_CATEGORY_NAMES.has(canonical);
+  return GENERIC_CATEGORY_NAMES.has(canonicalCategoryName(name).toLowerCase());
 }
 
 function headersForMode(): Record<string, string> {
   const apiKey = process.env.COINGECKO_API_KEY?.trim();
-  const apiMode = (process.env.COINGECKO_API_MODE?.trim().toLowerCase() as CoinGeckoApiMode | undefined) ?? "public";
-
-  if (!apiKey || apiMode === "public") {
-    return {};
-  }
-
-  if (apiMode === "demo") {
-    return { "x-cg-demo-api-key": apiKey };
-  }
-
-  return { "x-cg-pro-api-key": apiKey };
+  const apiMode = z.enum(["public", "demo", "pro"]).catch("public").parse(process.env.COINGECKO_API_MODE?.trim().toLowerCase()) as CoinGeckoApiMode;
+  if (!apiKey || apiMode === "public") return {};
+  return apiMode === "demo" ? { "x-cg-demo-api-key": apiKey } : { "x-cg-pro-api-key": apiKey };
 }
 
-function baseUrl() {
-  return process.env.COINGECKO_BASE_URL?.trim() || DEFAULT_BASE_URL;
+function providerUrl(pathname: string) {
+  const base = (process.env.COINGECKO_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  return new URL(pathname.replace(/^\/+/, ""), `${base}/`);
 }
 
-async function requestJson<T>(pathname: string, searchParams?: Record<string, string | number | boolean | undefined>) {
-  const url = new URL(pathname, baseUrl());
+function retryDelay(error: unknown, attempt: number) {
+  if (error instanceof ProviderHttpError && error.retryAfterMs) {
+    return Math.min(30_000, error.retryAfterMs);
+  }
+  return Math.min(8_000, 500 * 2 ** attempt + Math.floor(Math.random() * 250));
+}
 
+function isRetryable(error: unknown) {
+  return !(error instanceof ProviderHttpError) || error.status === 429 || error.status >= 500;
+}
+
+async function requestJson<T>(
+  pathname: string,
+  schema: z.ZodType<T>,
+  searchParams?: Record<string, string | number | boolean | undefined>
+): Promise<T> {
+  const url = providerUrl(pathname);
   for (const [key, value] of Object.entries(searchParams ?? {})) {
-    if (value === undefined) continue;
-    url.searchParams.set(key, String(value));
+    if (value !== undefined) url.searchParams.set(key, String(value));
   }
 
-  const authHeaders = headersForMode();
-  const headers: Record<string, string> = {
-    accept: "application/json",
-    ...authHeaders
-  };
+  const config = getRuntimeConfig();
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= config.providerMaxRetries; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        headers: { accept: "application/json", ...headersForMode() },
+        cache: "no-store",
+        signal: AbortSignal.timeout(config.providerTimeoutMs)
+      });
 
-  const response = await fetch(url, {
-    headers,
-    cache: "no-store"
-  });
+      if (!response.ok) {
+        const retryAfter = Number(response.headers.get("retry-after"));
+        throw new ProviderHttpError(
+          `CoinGecko request failed for ${url.pathname}: ${response.status} ${response.statusText}`,
+          response.status,
+          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1_000 : undefined
+        );
+      }
 
-  if (!response.ok) {
-    throw new Error(`CoinGecko request failed for ${url.pathname}: ${response.status} ${response.statusText}`);
+      return schema.parse(await response.json());
+    } catch (error) {
+      lastError = error;
+      if (attempt >= config.providerMaxRetries || !isRetryable(error)) break;
+      const delayMs = retryDelay(error, attempt);
+      logger.warn({ err: error, attempt: attempt + 1, delayMs, path: url.pathname }, "Provider request will be retried");
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 
-  return (await response.json()) as T;
+  throw lastError instanceof Error ? lastError : new Error("CoinGecko request failed");
 }
 
-async function fetchMarketCoins(limit = 12) {
-  return requestJson<CoinGeckoMarketCoin[]>("/coins/markets", {
+async function fetchMarketCoins(limit: number) {
+  return requestJson("/coins/markets", z.array(marketCoinSchema), {
     vs_currency: "usd",
     order: "market_cap_desc",
     per_page: Math.min(250, Math.max(1, limit)),
@@ -148,27 +175,19 @@ async function fetchMarketCoins(limit = 12) {
 }
 
 async function fetchCategoryMarkets() {
-  return requestJson<CoinGeckoCategoryMarket[]>("/coins/categories", {
-    order: "market_cap_desc"
-  });
+  return requestJson("/coins/categories", z.array(categoryMarketSchema), { order: "market_cap_desc" });
 }
 
-async function fetchCoinDetail(id: string) {
-  return requestJson<CoinGeckoCoinDetail>(`/coins/${encodeURIComponent(id)}`, {
+async function fetchCategoryForCoin(coinId: string) {
+  const detail = await requestJson(`/coins/${encodeURIComponent(coinId)}`, coinDetailSchema, {
     localization: false,
     tickers: false,
     market_data: false,
     community_data: false,
     developer_data: false,
-    sparkline: false,
-    include_categories_details: false
+    sparkline: false
   });
-}
-
-async function fetchCategoryForCoin(coinId: string) {
-  const detail = await fetchCoinDetail(coinId);
   const candidate = detail.categories.find((category) => !isGenericCategory(category)) ?? detail.categories[0] ?? "Uncategorized";
-
   return {
     categoryId: slugifyCategoryName(candidate) || "uncategorized",
     categoryName: canonicalCategoryName(candidate) || "Uncategorized",
@@ -176,12 +195,39 @@ async function fetchCategoryForCoin(coinId: string) {
   };
 }
 
-export async function fetchLiveSnapshot(limit = 12): Promise<LiveSnapshot> {
-  const [marketCoins, categoryMarkets] = await Promise.all([fetchMarketCoins(limit), fetchCategoryMarkets()]);
+async function mapWithConcurrency<T, R>(values: T[], concurrency: number, mapper: (value: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(values[index]);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
 
-  const coinsWithCategories = await Promise.all(
-    marketCoins.slice(0, limit).map(async (coin) => {
-      const categoryMeta = await fetchCategoryForCoin(coin.id);
+export async function fetchLiveSnapshot(limit = getRuntimeConfig().scanLimit): Promise<LiveSnapshot> {
+  const [marketCoins, categoryMarkets] = await Promise.all([
+    fetchMarketCoins(limit),
+    fetchCategoryMarkets().catch((error) => {
+      logger.warn({ err: error }, "Category market request failed; coin snapshots will continue without category momentum");
+      return [];
+    })
+  ]);
+
+  if (marketCoins.length === 0) throw new Error("CoinGecko returned an empty market snapshot");
+
+  const coinsWithCategories = await mapWithConcurrency(
+    marketCoins.slice(0, limit),
+    getRuntimeConfig().providerConcurrency,
+    async (coin): Promise<LiveCoin> => {
+      const categoryMeta = await fetchCategoryForCoin(coin.id).catch((error) => {
+        logger.warn({ err: error, providerId: coin.id }, "Coin category lookup failed");
+        return { categoryId: "uncategorized", categoryName: "Uncategorized", imageUrl: "" };
+      });
       return {
         providerId: coin.id,
         symbol: coin.symbol.toUpperCase(),
@@ -190,53 +236,50 @@ export async function fetchLiveSnapshot(limit = 12): Promise<LiveSnapshot> {
         categoryId: categoryMeta.categoryId,
         categoryName: categoryMeta.categoryName,
         rank: coin.market_cap_rank ?? 0,
-        lastPrice: coin.current_price,
-        currentMarketCap: coin.market_cap,
-        currentVolume: coin.total_volume,
+        lastPrice: coin.current_price ?? 0,
+        currentMarketCap: coin.market_cap ?? 0,
+        currentVolume: coin.total_volume ?? 0,
         change1h: coin.price_change_percentage_1h_in_currency ?? 0,
         change24h: coin.price_change_percentage_24h_in_currency ?? 0,
         volumeDelta24h: 0,
         sparkline: coin.sparkline_in_7d?.price ?? [],
         updatedAt: coin.last_updated
-      } satisfies LiveCoin;
-    })
-  );
-
-  const categoryMap = new Map(
-    categoryMarkets.map((category) => [
-      category.id,
-      {
-        providerId: category.id,
-        name: category.name,
-        marketCapChange24h: category.market_cap_change_24h,
-        assetCount: 0,
-        updatedAt: category.updated_at
-      } satisfies LiveCategory
-    ])
-  );
-
-  for (const coin of coinsWithCategories) {
-    const category = categoryMap.get(coin.categoryId);
-    if (category) {
-      category.assetCount += 1;
-    } else {
-      categoryMap.set(coin.categoryId, {
-        providerId: coin.categoryId,
-        name: coin.categoryName,
-        marketCapChange24h: 0,
-        assetCount: 1,
-        updatedAt: coin.updatedAt
-      });
+      };
     }
+  );
+
+  const categoryMarketBySlug = new Map<string, z.infer<typeof categoryMarketSchema>>();
+  for (const category of categoryMarkets) {
+    categoryMarketBySlug.set(category.id, category);
+    categoryMarketBySlug.set(slugifyCategoryName(category.name), category);
   }
 
-  const updatedAt = coinsWithCategories[0]?.updatedAt ?? new Date().toISOString();
+  const categoriesById = new Map<string, LiveCategory>();
+  for (const coin of coinsWithCategories) {
+    const existing = categoriesById.get(coin.categoryId);
+    if (existing) {
+      existing.assetCount += 1;
+      continue;
+    }
+    const market = categoryMarketBySlug.get(coin.categoryId);
+    categoriesById.set(coin.categoryId, {
+      providerId: coin.categoryId,
+      name: coin.categoryName,
+      marketCapChange24h: market?.market_cap_change_24h ?? 0,
+      assetCount: 1,
+      updatedAt: market?.updated_at ?? coin.updatedAt
+    });
+  }
 
+  const updatedAt = coinsWithCategories.reduce(
+    (latest, coin) => (coin.updatedAt > latest ? coin.updatedAt : latest),
+    coinsWithCategories[0].updatedAt
+  );
   return {
     source: "coingecko",
     updatedAt,
     coins: coinsWithCategories,
-    categories: Array.from(categoryMap.values()).sort((a, b) => b.marketCapChange24h - a.marketCapChange24h)
+    categories: Array.from(categoriesById.values()).sort((a, b) => b.marketCapChange24h - a.marketCapChange24h)
   };
 }
 

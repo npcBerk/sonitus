@@ -1,23 +1,23 @@
 import { NextResponse } from "next/server";
 
-import { runScanJob } from "@/lib/dashboard";
+import { ConfigurationError } from "@/lib/errors";
+import { isInternalRequestAuthorized } from "@/lib/internal-auth";
+import { logger } from "@/lib/logger";
+import { enqueueMarketSnapshot } from "@/lib/queue";
 
 export const dynamic = "force-dynamic";
-
-function isAuthorized(request: Request) {
-  const expected = process.env.INTERNAL_JOB_TOKEN ?? "sonitus-dev-token";
-  const header = request.headers.get("x-internal-token");
-  const url = new URL(request.url);
-  const token = url.searchParams.get("token");
-
-  return header === expected || token === expected;
-}
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  try {
+    if (!isInternalRequestAuthorized(request)) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    const job = await enqueueMarketSnapshot("manual");
+    return NextResponse.json({ ok: true, queued: true, jobId: job.id }, { status: 202 });
+  } catch (error) {
+    logger.error({ err: error }, "Failed to enqueue manual market scan");
+    const status = error instanceof ConfigurationError ? 503 : 500;
+    return NextResponse.json({ ok: false, error: status === 503 ? "Scan service is not configured" : "Unable to enqueue scan" }, { status });
   }
-
-  const job = runScanJob();
-  return NextResponse.json({ ok: true, job });
 }

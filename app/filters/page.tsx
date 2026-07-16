@@ -15,10 +15,11 @@ export default async function FiltersPage({ searchParams }: PageProps) {
   const filters = parseDashboardFilters(resolvedSearchParams);
   const payload = await loadDashboardPayload(filters);
 
+  const leadingCategory = payload.categories.find((category) => category.assetCount > 0);
   const examples = [
-    { label: "High volume layer 1", href: "/?category=layer-1&sort=volume&minVolume=1000000000" },
+    { label: leadingCategory ? `High volume ${leadingCategory.name}` : "High volume assets", href: leadingCategory ? `/?category=${encodeURIComponent(leadingCategory.providerId)}&sort=volume&minVolume=1000000000` : "/?sort=volume&minVolume=1000000000" },
     { label: "Volatility leaders", href: "/?sort=volatility" },
-    { label: "Category pressure: memecoins", href: "/?category=memes&sort=change24h" }
+    { label: leadingCategory ? `Category pressure: ${leadingCategory.name}` : "Category pressure", href: leadingCategory ? `/?category=${encodeURIComponent(leadingCategory.providerId)}&sort=change24h` : "/?sort=change24h" }
   ];
 
   return (
@@ -27,7 +28,7 @@ export default async function FiltersPage({ searchParams }: PageProps) {
         <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Advanced filters</p>
         <h2 className="mt-3 text-3xl font-semibold text-slate-50">Signal recipes for the dashboard</h2>
         <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
-          The filter layer is intentionally simple: search, category, sorting, and market thresholds. That keeps the dashboard fast, URL-addressable, and easy to expand when the backend becomes real.
+          Search, category, sorting, and market thresholds are evaluated by the server against the latest persisted snapshot. Filter state stays URL-addressable and shareable.
         </p>
         <div className="mt-6">
           <FilterBar filters={filters} categories={payload.categories} />
@@ -47,7 +48,7 @@ export default async function FiltersPage({ searchParams }: PageProps) {
       <section className="grid gap-4 md:grid-cols-3">
         <MetricCard label="Current result count" value={payload.coins.length} tone="cyan" kind="number" help="Matches the active filter state" />
         <MetricCard label="Highest volume asset" value={payload.coins[0]?.symbol ?? "N/A"} tone="emerald" help="Top row after sorting" />
-        <MetricCard label="Health route" value="ready" tone="violet" help="Use /health for infrastructure signals" />
+        <MetricCard label="Health route" value="monitored" tone="violet" help="Use /health for infrastructure signals" />
       </section>
     </div>
   );

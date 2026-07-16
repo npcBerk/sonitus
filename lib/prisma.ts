@@ -1,13 +1,16 @@
 import { PrismaClient } from "@prisma/client";
 
+import { getDataMode } from "./config";
+import { ConfigurationError } from "./errors";
+
 declare global {
-  // eslint-disable-next-line no-var
   var __sonitusPrisma: PrismaClient | undefined;
 }
 
 export function getPrismaClient() {
   if (!process.env.DATABASE_URL) {
-    return null;
+    if (getDataMode() === "mock") return null;
+    throw new ConfigurationError("DATABASE_URL is required when SONITUS_DATA_MODE=database.");
   }
 
   if (!globalThis.__sonitusPrisma) {

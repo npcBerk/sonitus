@@ -10,6 +10,7 @@ import { VolumeDropPanel } from "@/components/volume-drop-panel";
 import { VolatilityPanel } from "@/components/volatility-panel";
 import { formatCompactCurrency, formatPercent, formatSignedPercent } from "@/lib/format";
 import { loadDashboardPayload, parseDashboardFilters } from "@/lib/dashboard";
+import { getDataMode } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const resolvedSearchParams = await searchParams;
   const filters = parseDashboardFilters(resolvedSearchParams);
   const payload = await loadDashboardPayload(filters);
+  const dataMode = getDataMode();
   const topAsset = payload.coins[0];
 
   return (
@@ -30,7 +32,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-3">
               <span className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-[11px] uppercase tracking-[0.35em] text-cyan-100">
-                Live market signal board
+                {dataMode === "database" ? "Live market signal board" : "Demo market signal board"}
               </span>
               <UpdateStatusBadge updatedAt={payload.updatedAt} />
             </div>
@@ -80,7 +82,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 </div>
               </div>
               <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/8 p-4 text-sm leading-6 text-cyan-50/90">
-                The API layer is already split from the UI. Once you connect PostgreSQL and a worker, this dashboard can switch from seeded data to live snapshots without changing the frontend structure.
+                Signals are computed server-side from persisted snapshots. Volume change uses a 24-hour baseline when sufficient history is available; a zero value means the baseline is not available yet.
               </div>
             </div>
           </div>

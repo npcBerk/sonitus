@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 
-import { loadDashboardPayload, parseDashboardFilters } from "@/lib/dashboard";
+import { loadDashboardPayload, validateDashboardFilters } from "@/lib/dashboard";
+import { apiErrorResponse, marketDataHeaders } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const filters = parseDashboardFilters(Object.fromEntries(searchParams.entries()));
-  const payload = await loadDashboardPayload(filters);
-  return NextResponse.json({ ok: true, assets: payload.coins, updatedAt: payload.updatedAt });
+  try {
+    const parsed = validateDashboardFilters(Object.fromEntries(new URL(request.url).searchParams.entries()));
+    if (!parsed.success) throw parsed.error;
+    const payload = await loadDashboardPayload(parsed.data);
+    return NextResponse.json({ ok: true, assets: payload.coins, updatedAt: payload.updatedAt }, { headers: marketDataHeaders });
+  } catch (error) {
+    return apiErrorResponse(error, "/api/assets");
+  }
 }

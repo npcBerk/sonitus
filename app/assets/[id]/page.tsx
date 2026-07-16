@@ -19,7 +19,7 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
 
   const payload = await loadDashboardPayload();
   const related = payload.coins.filter((item) => item.categoryId === asset.categoryId && item.id !== asset.id).slice(0, 4);
-  const volMcap = asset.currentVolume / asset.currentMarketCap;
+  const volMcap = asset.currentMarketCap > 0 ? asset.currentVolume / asset.currentMarketCap : 0;
 
   return (
     <div className="space-y-6">

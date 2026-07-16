@@ -1,69 +1,67 @@
+import { randomUUID } from "node:crypto";
+
 import type { Prisma, PrismaClient } from "@prisma/client";
 
-import { buildCategories, getDashboardPayload, runScanJob } from "./dashboard";
+import type { LiveSnapshot } from "./coingecko";
+import { getRuntimeConfig } from "./config";
+import { buildCategories, createDashboardPayload, runScanJob } from "./dashboard";
+import { logger } from "./logger";
 import { baseScanJob, getBaseAssets } from "./mock-data";
-import type { LiveCategory, LiveCoin, LiveSnapshot } from "./coingecko";
+import { writeDashboardCache } from "./redis";
+import type { Asset, Category, ScanJob } from "./types";
 
 type SeedOptions = {
   clearExisting?: boolean;
+};
+
+export type ScanContext = {
+  id: string;
+  startedAt: Date;
 };
 
 function toJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
 
-function computeVolumeDeltaPercent(currentVolume: number, previousVolume?: number | null) {
-  if (!previousVolume || previousVolume <= 0) {
-    return 0;
-  }
-
-  return Number((((currentVolume - previousVolume) / previousVolume) * 100).toFixed(2));
+export function computeVolumeDeltaPercent(currentVolume: number, baselineVolume?: number | null) {
+  if (!baselineVolume || baselineVolume <= 0) return 0;
+  return Number((((currentVolume - baselineVolume) / baselineVolume) * 100).toFixed(2));
 }
 
-function buildLiveDashboardPayload(coins: LiveCoin[], categories: LiveCategory[], updatedAt: string, latestScan: { id: string; jobType: string; status: "idle" | "running" | "success" | "failed"; processedCount: number; }) {
-  return {
-    ok: true as const,
-    updatedAt,
-    summary: {
-      totalAssets: coins.length,
-      totalMarketCap: coins.reduce((sum, coin) => sum + coin.currentMarketCap, 0),
-      totalVolume: coins.reduce((sum, coin) => sum + coin.currentVolume, 0),
-      averageChange24h: coins.length === 0 ? 0 : coins.reduce((sum, coin) => sum + coin.change24h, 0) / coins.length,
-      averageVolMcap: coins.length === 0 ? 0 : coins.reduce((sum, coin) => sum + coin.currentVolume / coin.currentMarketCap, 0) / coins.length,
-      leadingCategory: categories.slice().sort((a, b) => b.marketCapChange24h - a.marketCapChange24h)[0]?.name ?? "Unknown"
-    },
-    coins,
-    categories,
-    highVolMcap: coins
-      .slice()
-      .sort((a, b) => b.currentVolume / b.currentMarketCap - a.currentVolume / a.currentMarketCap)
-      .slice(0, 6),
-    volatileAssets: coins
-      .slice()
-      .sort(
-        (a, b) =>
-          Math.abs(b.change1h) * 1.35 + Math.abs(b.change24h) * 0.95 + Math.abs(b.volumeDelta24h) * 0.18 -
-          (Math.abs(a.change1h) * 1.35 + Math.abs(a.change24h) * 0.95 + Math.abs(a.volumeDelta24h) * 0.18)
-      )
-      .slice(0, 6),
-    fallingVolume: coins.filter((coin) => coin.volumeDelta24h < 0).slice(0, 6),
-    latestScan: {
-      id: latestScan.id,
-      jobType: latestScan.jobType,
-      status: latestScan.status,
-      startedAt: updatedAt,
-      finishedAt: updatedAt,
-      processedCount: latestScan.processedCount,
-      errorMessage: null
+function errorMessage(error: unknown) {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
+}
+
+export async function startScanJob(prisma: PrismaClient): Promise<ScanContext> {
+  const context = { id: randomUUID(), startedAt: new Date() };
+  await prisma.scanJob.create({
+    data: {
+      id: context.id,
+      jobType: "market-snapshot",
+      status: "running",
+      startedAt: context.startedAt
     }
-  };
+  });
+  return context;
+}
+
+export async function failScanJob(prisma: PrismaClient, context: ScanContext, error: unknown) {
+  await prisma.scanJob
+    .update({
+      where: { id: context.id },
+      data: {
+        status: "failed",
+        finishedAt: new Date(),
+        errorMessage: errorMessage(error)
+      }
+    })
+    .catch((updateError) => logger.error({ err: updateError, scanId: context.id }, "Failed to persist failed scan status"));
 }
 
 export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOptions = {}) {
   const clearExisting = options.clearExisting ?? true;
-  const assets = getBaseAssets();
-  const categories = buildCategories(assets);
-  const payload = getDashboardPayload();
+  const sourceAssets = getBaseAssets();
+  const sourceCategories = buildCategories(sourceAssets);
   const latestScan = clearExisting ? runScanJob() : baseScanJob;
 
   if (clearExisting) {
@@ -76,32 +74,22 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
     ]);
   }
 
-  const storedCategories: Array<{ id: string; providerId: string }> = [];
-  for (const category of categories) {
-    const stored = await prisma.category.upsert({
-      where: { providerId: category.providerId },
-      update: {
-        name: category.name,
-        marketCapChange24h: category.marketCapChange24h
-      },
-      create: {
-        providerId: category.providerId,
-        name: category.name,
-        marketCapChange24h: category.marketCapChange24h
-      }
-    });
-    storedCategories.push(stored);
+  const storedCategories = [];
+  for (const category of sourceCategories) {
+    storedCategories.push(
+      await prisma.category.upsert({
+        where: { providerId: category.providerId },
+        update: { name: category.name, marketCapChange24h: category.marketCapChange24h },
+        create: { providerId: category.providerId, name: category.name, marketCapChange24h: category.marketCapChange24h }
+      })
+    );
   }
+  const categoryIdByProvider = new Map(storedCategories.map((category) => [category.providerId, category.id]));
 
-  const categoryByProviderId = new Map(storedCategories.map((category) => [category.providerId, category.id]));
-
-  const storedAssets: Array<{ id: string; providerId: string }> = [];
-  for (const asset of assets) {
-    const categoryId = categoryByProviderId.get(asset.categoryId);
-    if (!categoryId) {
-      throw new Error(`Missing category for asset ${asset.id}`);
-    }
-
+  const persistedAssets: Asset[] = [];
+  for (const asset of sourceAssets) {
+    const categoryId = categoryIdByProvider.get(asset.categoryId);
+    if (!categoryId) throw new Error(`Missing category for asset ${asset.id}`);
     const stored = await prisma.asset.upsert({
       where: { providerId: asset.providerId },
       update: {
@@ -112,8 +100,7 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
         currentMarketCap: asset.currentMarketCap,
         currentVolume: asset.currentVolume,
         lastPrice: asset.lastPrice,
-        sparkline: asset.sparkline,
-        imageUrl: null
+        sparkline: asset.sparkline
       },
       create: {
         providerId: asset.providerId,
@@ -124,224 +111,236 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
         currentMarketCap: asset.currentMarketCap,
         currentVolume: asset.currentVolume,
         lastPrice: asset.lastPrice,
-        sparkline: asset.sparkline,
-        imageUrl: null
+        sparkline: asset.sparkline
       }
     });
-    storedAssets.push(stored);
-  }
-
-  for (const asset of storedAssets) {
-    const source = assets.find((item) => item.providerId === asset.providerId);
-    if (!source) continue;
-
-    await prisma.assetMetric.create({
-      data: {
-        assetId: asset.id,
-        capturedAt: new Date(source.updatedAt),
-        price: source.lastPrice,
-        marketCap: source.currentMarketCap,
-        volume24h: source.currentVolume,
-        change1h: source.change1h,
-        change24h: source.change24h,
-        volumeDelta24h: source.volumeDelta24h
-      }
-    });
-  }
-
-  await prisma.scanJob.create({
-    data: {
-      id: latestScan.id,
-      jobType: latestScan.jobType,
-      status: latestScan.status,
-      startedAt: new Date(latestScan.startedAt),
-      finishedAt: latestScan.finishedAt ? new Date(latestScan.finishedAt) : null,
-      processedCount: latestScan.processedCount,
-      errorMessage: latestScan.errorMessage
-    }
-  });
-
-  await prisma.cacheSnapshot.upsert({
-    where: { snapshotType: "dashboard" },
-    update: {
-      payload: toJson(payload),
-      refreshedAt: new Date(payload.updatedAt)
-    },
-    create: {
-      snapshotType: "dashboard",
-      payload: toJson(payload),
-      refreshedAt: new Date(payload.updatedAt)
-    }
-  });
-
-  return {
-    assets: storedAssets.length,
-    categories: storedCategories.length
-  };
-}
-
-export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSnapshot) {
-  const categories = snapshot.categories;
-  const assets = snapshot.coins;
-  const persistedCoins: LiveCoin[] = [];
-
-  const storedCategories: Array<{ id: string; providerId: string; name: string; marketCapChange24h: number }> = [];
-  for (const category of categories) {
-    const stored = await prisma.category.upsert({
-      where: { providerId: category.providerId },
+    await prisma.assetMetric.upsert({
+      where: { assetId_capturedAt: { assetId: stored.id, capturedAt: new Date(asset.updatedAt) } },
       update: {
-        name: category.name,
-        marketCapChange24h: category.marketCapChange24h
+        price: asset.lastPrice,
+        marketCap: asset.currentMarketCap,
+        volume24h: asset.currentVolume,
+        change1h: asset.change1h,
+        change24h: asset.change24h,
+        volumeDelta24h: asset.volumeDelta24h
       },
       create: {
-        providerId: category.providerId,
-        name: category.name,
-        marketCapChange24h: category.marketCapChange24h
-      }
-    });
-    storedCategories.push({
-      id: stored.id,
-      providerId: stored.providerId,
-      name: stored.name,
-      marketCapChange24h: stored.marketCapChange24h
-    });
-  }
-
-  const categoryByProviderId = new Map(storedCategories.map((category) => [category.providerId, category.id]));
-
-  const storedAssets: Array<{ id: string; providerId: string }> = [];
-  for (const asset of assets) {
-    const categoryId = categoryByProviderId.get(asset.categoryId);
-    if (!categoryId) {
-      const inferred = await prisma.category.upsert({
-        where: { providerId: asset.categoryId },
-        update: {
-          name: asset.categoryName
-        },
-        create: {
-          providerId: asset.categoryId,
-          name: asset.categoryName,
-          marketCapChange24h: 0
-        }
-      });
-      categoryByProviderId.set(asset.categoryId, inferred.id);
-      storedCategories.push({
-        id: inferred.id,
-        providerId: inferred.providerId,
-        name: inferred.name,
-        marketCapChange24h: inferred.marketCapChange24h
-      });
-    }
-
-    const resolvedCategoryId = categoryByProviderId.get(asset.categoryId);
-    if (!resolvedCategoryId) {
-      throw new Error(`Missing category for live asset ${asset.providerId}`);
-    }
-
-    const storedAsset = await prisma.asset.upsert({
-      where: { providerId: asset.providerId },
-      update: {
-        symbol: asset.symbol,
-        name: asset.name,
-        categoryId: resolvedCategoryId,
-        rank: asset.rank,
-        currentMarketCap: asset.currentMarketCap,
-        currentVolume: asset.currentVolume,
-        lastPrice: asset.lastPrice,
-        sparkline: asset.sparkline,
-        imageUrl: asset.imageUrl || null
-      },
-      create: {
-        providerId: asset.providerId,
-        symbol: asset.symbol,
-        name: asset.name,
-        categoryId: resolvedCategoryId,
-        rank: asset.rank,
-        currentMarketCap: asset.currentMarketCap,
-        currentVolume: asset.currentVolume,
-        lastPrice: asset.lastPrice,
-        sparkline: asset.sparkline,
-        imageUrl: asset.imageUrl || null
-      }
-    });
-    storedAssets.push(storedAsset);
-
-    const previousMetric = await prisma.assetMetric.findFirst({
-      where: { assetId: storedAsset.id },
-      orderBy: { capturedAt: "desc" }
-    });
-
-    await prisma.assetMetric.create({
-      data: {
-        assetId: storedAsset.id,
+        assetId: stored.id,
         capturedAt: new Date(asset.updatedAt),
         price: asset.lastPrice,
         marketCap: asset.currentMarketCap,
         volume24h: asset.currentVolume,
         change1h: asset.change1h,
         change24h: asset.change24h,
-        volumeDelta24h: computeVolumeDeltaPercent(asset.currentVolume, previousMetric?.volume24h)
+        volumeDelta24h: asset.volumeDelta24h
       }
     });
-
-    const volumeDelta24h = computeVolumeDeltaPercent(asset.currentVolume, previousMetric?.volume24h);
-    persistedCoins.push({
-      ...asset,
-      volumeDelta24h
-    });
+    persistedAssets.push({ ...asset, id: stored.id, categoryId });
   }
 
-  const coinCountsByCategory = new Map<string, number>();
-  for (const coin of persistedCoins) {
-    coinCountsByCategory.set(coin.categoryId, (coinCountsByCategory.get(coin.categoryId) ?? 0) + 1);
-  }
-
-  const liveCategories = storedCategories.map((category) => ({
-    providerId: category.providerId,
-    name: category.name,
-    marketCapChange24h: category.marketCapChange24h,
-    assetCount: coinCountsByCategory.get(category.providerId) ?? 0,
-    updatedAt: snapshot.updatedAt
-  }));
-
-  const latestScan = runScanJob();
-  await prisma.scanJob.create({
-    data: {
+  await prisma.scanJob.upsert({
+    where: { id: latestScan.id },
+    update: {},
+    create: {
       id: latestScan.id,
       jobType: latestScan.jobType,
       status: latestScan.status,
-      startedAt: new Date(snapshot.updatedAt),
-      finishedAt: new Date(snapshot.updatedAt),
-      processedCount: storedAssets.length,
-      errorMessage: null
+      startedAt: new Date(latestScan.startedAt),
+      finishedAt: latestScan.finishedAt ? new Date(latestScan.finishedAt) : null,
+      processedCount: persistedAssets.length,
+      errorMessage: latestScan.errorMessage
     }
   });
 
+  const counts = new Map<string, number>();
+  for (const asset of persistedAssets) counts.set(asset.categoryId, (counts.get(asset.categoryId) ?? 0) + 1);
+  const categories: Category[] = storedCategories.map((category) => ({
+    id: category.id,
+    providerId: category.providerId,
+    name: category.name,
+    marketCapChange24h: category.marketCapChange24h,
+    assetCount: counts.get(category.id) ?? 0,
+    updatedAt: category.updatedAt.toISOString()
+  }));
+  const payload = createDashboardPayload(persistedAssets, categories, latestScan, latestScan.finishedAt ?? new Date().toISOString());
   await prisma.cacheSnapshot.upsert({
     where: { snapshotType: "dashboard" },
-    update: {
-      payload: toJson(buildLiveDashboardPayload(persistedCoins, liveCategories, snapshot.updatedAt, {
-        id: latestScan.id,
-        jobType: latestScan.jobType,
-        status: latestScan.status,
-        processedCount: storedAssets.length
-      })),
-      refreshedAt: new Date(snapshot.updatedAt)
-    },
-    create: {
-      snapshotType: "dashboard",
-      payload: toJson(buildLiveDashboardPayload(persistedCoins, liveCategories, snapshot.updatedAt, {
-        id: latestScan.id,
-        jobType: latestScan.jobType,
-        status: latestScan.status,
-        processedCount: storedAssets.length
-      })),
-      refreshedAt: new Date(snapshot.updatedAt)
-    }
+    update: { payload: toJson(payload), refreshedAt: new Date(payload.updatedAt) },
+    create: { snapshotType: "dashboard", payload: toJson(payload), refreshedAt: new Date(payload.updatedAt) }
   });
+  await writeDashboardCache(payload);
+  return { assets: persistedAssets.length, categories: categories.length };
+}
 
-  return {
-    assets: storedAssets.length,
-    categories: storedCategories.length
-  };
+export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSnapshot, existingContext?: ScanContext) {
+  if (snapshot.coins.length === 0) throw new Error("Refusing to persist an empty market snapshot");
+  const context = existingContext ?? (await startScanJob(prisma));
+
+  try {
+    const payload = await prisma.$transaction(
+      async (tx) => {
+        const categorySourceByProvider = new Map(snapshot.categories.map((category) => [category.providerId, category]));
+        for (const coin of snapshot.coins) {
+          if (!categorySourceByProvider.has(coin.categoryId)) {
+            categorySourceByProvider.set(coin.categoryId, {
+              providerId: coin.categoryId,
+              name: coin.categoryName,
+              marketCapChange24h: 0,
+              assetCount: 0,
+              updatedAt: snapshot.updatedAt
+            });
+          }
+        }
+
+        const storedCategories = [];
+        for (const category of categorySourceByProvider.values()) {
+          storedCategories.push(
+            await tx.category.upsert({
+              where: { providerId: category.providerId },
+              update: { name: category.name, marketCapChange24h: category.marketCapChange24h },
+              create: { providerId: category.providerId, name: category.name, marketCapChange24h: category.marketCapChange24h }
+            })
+          );
+        }
+        const categoryIdByProvider = new Map(storedCategories.map((category) => [category.providerId, category.id]));
+        const persistedAssets: Asset[] = [];
+        const toleranceMs = getRuntimeConfig().volumeBaselineToleranceMinutes * 60_000;
+
+        await tx.asset.updateMany({ data: { isActive: false } });
+
+        for (const coin of snapshot.coins) {
+          const categoryId = categoryIdByProvider.get(coin.categoryId);
+          if (!categoryId) throw new Error(`Missing category for live asset ${coin.providerId}`);
+          const capturedAt = new Date(coin.updatedAt);
+          if (Number.isNaN(capturedAt.getTime())) throw new Error(`Invalid provider timestamp for ${coin.providerId}`);
+
+          const stored = await tx.asset.upsert({
+            where: { providerId: coin.providerId },
+            update: {
+              symbol: coin.symbol,
+              name: coin.name,
+              imageUrl: coin.imageUrl || null,
+              isActive: true,
+              categoryId,
+              rank: coin.rank,
+              currentMarketCap: coin.currentMarketCap,
+              currentVolume: coin.currentVolume,
+              lastPrice: coin.lastPrice,
+              sparkline: coin.sparkline
+            },
+            create: {
+              providerId: coin.providerId,
+              symbol: coin.symbol,
+              name: coin.name,
+              imageUrl: coin.imageUrl || null,
+              isActive: true,
+              categoryId,
+              rank: coin.rank,
+              currentMarketCap: coin.currentMarketCap,
+              currentVolume: coin.currentVolume,
+              lastPrice: coin.lastPrice,
+              sparkline: coin.sparkline
+            }
+          });
+
+          const baselineTarget = capturedAt.getTime() - 24 * 60 * 60_000;
+          const baselineCandidates = await tx.assetMetric.findMany({
+            where: {
+              assetId: stored.id,
+              capturedAt: {
+                gte: new Date(baselineTarget - toleranceMs),
+                lte: new Date(baselineTarget + toleranceMs)
+              }
+            },
+            select: { capturedAt: true, volume24h: true }
+          });
+          const baseline = baselineCandidates.sort(
+            (a, b) => Math.abs(a.capturedAt.getTime() - baselineTarget) - Math.abs(b.capturedAt.getTime() - baselineTarget)
+          )[0];
+          const volumeDelta24h = computeVolumeDeltaPercent(coin.currentVolume, baseline?.volume24h);
+
+          await tx.assetMetric.upsert({
+            where: { assetId_capturedAt: { assetId: stored.id, capturedAt } },
+            update: {
+              price: coin.lastPrice,
+              marketCap: coin.currentMarketCap,
+              volume24h: coin.currentVolume,
+              change1h: coin.change1h,
+              change24h: coin.change24h,
+              volumeDelta24h
+            },
+            create: {
+              assetId: stored.id,
+              capturedAt,
+              price: coin.lastPrice,
+              marketCap: coin.currentMarketCap,
+              volume24h: coin.currentVolume,
+              change1h: coin.change1h,
+              change24h: coin.change24h,
+              volumeDelta24h
+            }
+          });
+
+          persistedAssets.push({
+            id: stored.id,
+            providerId: stored.providerId,
+            symbol: coin.symbol,
+            name: coin.name,
+            categoryId,
+            rank: coin.rank,
+            lastPrice: coin.lastPrice,
+            currentMarketCap: coin.currentMarketCap,
+            currentVolume: coin.currentVolume,
+            change1h: coin.change1h,
+            change24h: coin.change24h,
+            volumeDelta24h,
+            sparkline: coin.sparkline,
+            updatedAt: capturedAt.toISOString()
+          });
+        }
+
+        const counts = new Map<string, number>();
+        for (const asset of persistedAssets) counts.set(asset.categoryId, (counts.get(asset.categoryId) ?? 0) + 1);
+        const categories: Category[] = storedCategories.map((category) => ({
+          id: category.id,
+          providerId: category.providerId,
+          name: category.name,
+          marketCapChange24h: category.marketCapChange24h,
+          assetCount: counts.get(category.id) ?? 0,
+          updatedAt: category.updatedAt.toISOString()
+        }));
+        const finishedAt = new Date();
+        const latestScan: ScanJob = {
+          id: context.id,
+          jobType: "market-snapshot",
+          status: "success",
+          startedAt: context.startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          processedCount: persistedAssets.length,
+          errorMessage: null
+        };
+        const dashboard = createDashboardPayload(persistedAssets, categories, latestScan, snapshot.updatedAt);
+
+        await tx.scanJob.update({
+          where: { id: context.id },
+          data: { status: "success", finishedAt, processedCount: persistedAssets.length, errorMessage: null }
+        });
+        await tx.cacheSnapshot.upsert({
+          where: { snapshotType: "dashboard" },
+          update: { payload: toJson(dashboard), refreshedAt: new Date(snapshot.updatedAt) },
+          create: { snapshotType: "dashboard", payload: toJson(dashboard), refreshedAt: new Date(snapshot.updatedAt) }
+        });
+        const retentionCutoff = new Date(Date.now() - getRuntimeConfig().metricRetentionDays * 24 * 60 * 60_000);
+        await tx.assetMetric.deleteMany({ where: { capturedAt: { lt: retentionCutoff } } });
+        return dashboard;
+      },
+      { timeout: 30_000 }
+    );
+
+    await writeDashboardCache(payload);
+    return { assets: payload.coins.length, categories: payload.categories.length, payload };
+  } catch (error) {
+    await failScanJob(prisma, context, error);
+    throw error;
+  }
 }

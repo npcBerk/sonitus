@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sonitus
+          POSTGRES_PASSWORD: sonitus-ci
+          POSTGRES_DB: sonitus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sonitus -d sonitus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://sonitus:sonitus-ci@localhost:5432/sonitus?schema=public
+      REDIS_URL: redis://localhost:6379
+      SONITUS_DATA_MODE: database
+      INTERNAL_JOB_TOKEN: ci-only-internal-token-with-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate
+      - run: npm run db:deploy
+      - run: npm run db:seed
+      - run: npm run check
+      - run: npm audit --omit=dev --audit-level=high

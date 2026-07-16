@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { getDataMode } from "@/lib/config";
+
 const navItems = [
   { href: "/", label: "Dashboard" },
   { href: "/filters", label: "Filters" },
@@ -8,6 +10,7 @@ const navItems = [
 ];
 
 export function SiteShell({ children }: { children: ReactNode }) {
+  const dataMode = getDataMode();
   return (
     <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.12),_transparent_35%),radial-gradient(circle_at_top_right,_rgba(99,102,241,0.12),_transparent_30%),linear-gradient(180deg,_#020617_0%,_#040816_42%,_#030712_100%)] text-slate-50">
       <div className="pointer-events-none absolute inset-0 opacity-50 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.06)_1px,transparent_1px)] [background-size:56px_56px]" />
@@ -39,7 +42,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
         <main className="relative flex-1 py-6">{children}</main>
 
         <footer className="pb-4 text-xs text-slate-500">
-          Built for the SONITUS dashboard brief. Data shown here is seeded mock data and route-ready for a real provider.
+          SONITUS market intelligence dashboard · {dataMode === "database" ? "CoinGecko snapshots persisted by the ingestion worker" : "Local demo data mode"} · Not investment advice.
         </footer>
       </div>
     </div>
