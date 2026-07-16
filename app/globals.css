@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: #030712;
+  color: #e2e8f0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(103, 232, 249, 0.28);
+  color: #ecfeff;
+}
+
+.sonitus-panel {
+  border-radius: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 15, 31, 0.82);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.06), 0 24px 80px rgba(2, 6, 23, 0.55);
+  backdrop-filter: blur(20px);
+}

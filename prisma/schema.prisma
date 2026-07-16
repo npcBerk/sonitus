@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum JobStatus {
+  idle
+  running
+  success
+  failed
+}
+
+model Category {
+  id                  String  @id @default(cuid())
+  providerId          String  @unique @map("provider_id")
+  name                String
+  marketCapChange24h  Float   @default(0) @map("market_cap_change_24h")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  assets              Asset[]
+
+  @@map("categories")
+}
+
+model Asset {
+  id               String       @id @default(cuid())
+  providerId       String       @unique @map("provider_id")
+  symbol           String
+  name             String
+  imageUrl         String?      @map("image_url")
+  categoryId       String       @map("category_id")
+  category         Category     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  rank             Int          @default(0)
+  currentMarketCap Float        @default(0) @map("current_market_cap")
+  currentVolume    Float        @default(0) @map("current_volume")
+  lastPrice        Float        @default(0) @map("last_price")
+  sparkline        Float[]
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  metrics          AssetMetric[]
+
+  @@index([symbol])
+  @@index([rank])
+  @@map("assets")
+}
+
+model AssetMetric {
+  id              String   @id @default(cuid())
+  assetId         String   @map("asset_id")
+  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  capturedAt      DateTime @default(now()) @map("captured_at")
+  price           Float
+  marketCap       Float    @map("market_cap")
+  volume24h       Float    @map("volume_24h")
+  change1h        Float    @map("change_1h")
+  change24h       Float    @map("change_24h")
+  volumeDelta24h  Float    @map("volume_delta_24h")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([assetId, capturedAt])
+  @@map("asset_metrics")
+}
+
+model ScanJob {
+  id             String   @id @default(cuid())
+  jobType        String   @map("job_type")
+  status         JobStatus
+  startedAt      DateTime @map("started_at")
+  finishedAt     DateTime? @map("finished_at")
+  processedCount Int      @default(0) @map("processed_count")
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([status, startedAt])
+  @@map("scan_jobs")
+}
+
+model CacheSnapshot {
+  id           String   @id @default(cuid())
+  snapshotType String   @unique @map("snapshot_type")
+  payload      Json
+  refreshedAt  DateTime @default(now()) @map("refreshed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("cache_snapshots")
+}
