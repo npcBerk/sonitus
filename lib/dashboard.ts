@@ -72,6 +72,7 @@ export const dashboardPayloadSchema: z.ZodType<DashboardPayload> = z.object({
   }),
   coins: z.array(assetSchema),
   categories: z.array(categorySchema),
+  topVolumeAsset: assetSchema.nullable(),
   highVolMcap: z.array(assetSchema),
   volatileAssets: z.array(assetSchema),
   fallingVolume: z.array(assetSchema),
@@ -124,6 +125,17 @@ function stripSignals(asset: AssetWithSignals): Asset {
     sparkline: asset.sparkline,
     updatedAt: asset.updatedAt
   };
+}
+
+function stablecoinCategoryIds(categories: Category[]) {
+  const ids = new Set<string>();
+  for (const category of categories) {
+    const identity = `${category.providerId} ${category.name}`.toLocaleLowerCase("en-US");
+    if (!/\bstable[\s-]?coins?\b/.test(identity)) continue;
+    ids.add(category.id);
+    ids.add(category.providerId);
+  }
+  return ids;
 }
 
 export function buildCategories(assets: Asset[]): Category[] {
@@ -217,6 +229,8 @@ export function createDashboardPayload(
       : categories.find((category) => category.id === filters.category || category.providerId === filters.category)?.id ?? filters.category;
   const filteredAssets = filterAssets(assets, { ...filters, category: resolvedCategoryId });
   const enriched = enrichAssets(filteredAssets);
+  const stablecoinIds = stablecoinCategoryIds(categories);
+  const signalAssets = enriched.filter((asset) => !stablecoinIds.has(asset.categoryId));
   const totalMarketCap = enriched.reduce((sum, asset) => sum + asset.currentMarketCap, 0);
   const totalVolume = enriched.reduce((sum, asset) => sum + asset.currentVolume, 0);
   const averageChange24h = enriched.length === 0 ? 0 : enriched.reduce((sum, asset) => sum + asset.change24h, 0) / enriched.length;
@@ -237,14 +251,19 @@ export function createDashboardPayload(
     },
     coins: filteredAssets,
     categories,
-    highVolMcap: enriched
+    topVolumeAsset:
+      signalAssets
+        .slice()
+        .sort((a, b) => b.currentVolume - a.currentVolume)
+        .map(stripSignals)[0] ?? null,
+    highVolMcap: signalAssets
       .slice()
       .sort((a, b) => b.volMcapRatio - a.volMcapRatio)
       .filter((asset) => asset.volMcapRatio >= 0.03)
       .slice(0, 6)
       .map(stripSignals),
-    volatileAssets: enriched.slice().sort((a, b) => b.volatilityScore - a.volatilityScore).slice(0, 6).map(stripSignals),
-    fallingVolume: enriched
+    volatileAssets: signalAssets.slice().sort((a, b) => b.volatilityScore - a.volatilityScore).slice(0, 6).map(stripSignals),
+    fallingVolume: signalAssets
       .filter((asset) => asset.volumeDelta24h < 0)
       .sort((a, b) => a.volumeDelta24h - b.volumeDelta24h)
       .slice(0, 6)

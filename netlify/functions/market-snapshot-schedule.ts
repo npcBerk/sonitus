@@ -20,5 +20,5 @@ export default async function marketSnapshotSchedule(_request: Request, context:
 }
 
 export const config: Config = {
-  schedule: "*/5 * * * *"
+  schedule: "*/10 * * * *"
 };

@@ -4,8 +4,8 @@ import test from "node:test";
 import { config as backgroundConfig } from "../netlify/functions/market-snapshot-background";
 import scheduleMarketSnapshot, { config as scheduleConfig } from "../netlify/functions/market-snapshot-schedule";
 
-test("Netlify ingestion uses a five-minute scheduler and a background worker", () => {
-  assert.equal(scheduleConfig.schedule, "*/5 * * * *");
+test("Netlify ingestion uses a ten-minute scheduler and a background worker", () => {
+  assert.equal(scheduleConfig.schedule, "*/10 * * * *");
   assert.equal(backgroundConfig.background, true);
   assert.equal(backgroundConfig.path, "/internal/netlify/market-snapshot-background");
 });

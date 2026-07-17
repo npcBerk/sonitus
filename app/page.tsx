@@ -24,7 +24,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const filters = parseDashboardFilters(resolvedSearchParams);
   const payload = await loadDashboardPayload(filters);
   const dataMode = getDataMode();
-  const topAsset = payload.coins[0];
+  const topAsset = payload.topVolumeAsset;
 
   return (
     <div className="space-y-6">

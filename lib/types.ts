@@ -49,6 +49,7 @@ export type DashboardPayload = {
   summary: DashboardSummary;
   coins: Asset[];
   categories: Category[];
+  topVolumeAsset: Asset | null;
   highVolMcap: Asset[];
   volatileAssets: Asset[];
   fallingVolume: Asset[];

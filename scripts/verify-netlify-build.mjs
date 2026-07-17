@@ -9,7 +9,7 @@ const nextHandler = byName.get("___netlify-server-handler");
 
 assert.equal(background?.invocationMode, "background", "Netlify market scan must be bundled as a Background Function");
 assert.equal(background?.routes?.[0]?.literal, "/internal/netlify/market-snapshot-background", "Background scan route is missing");
-assert.equal(schedule?.schedule, "*/5 * * * *", "Five-minute Netlify schedule is missing");
+assert.equal(schedule?.schedule, "*/10 * * * *", "Ten-minute Netlify schedule is missing");
 assert.ok(nextHandler, "Netlify OpenNext server handler is missing");
 
 console.log("Netlify function manifest verified.");

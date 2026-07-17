@@ -25,7 +25,7 @@ export function getRuntimeConfig() {
   return {
     dataMode: getDataMode(),
     scanIntervalMinutes: positiveInteger(5).parse(process.env.SCAN_INTERVAL_MINUTES),
-    scanLimit: positiveInteger(25).parse(process.env.COINGECKO_SCAN_LIMIT),
+    scanLimit: positiveInteger(50).parse(process.env.COINGECKO_SCAN_LIMIT),
     providerConcurrency: positiveInteger(4).parse(process.env.COINGECKO_CONCURRENCY),
     providerTimeoutMs: positiveInteger(10_000).parse(process.env.COINGECKO_TIMEOUT_MS),
     providerMaxRetries: z.coerce.number().int().min(0).max(6).catch(3).parse(process.env.COINGECKO_MAX_RETRIES),

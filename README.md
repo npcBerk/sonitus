@@ -11,7 +11,7 @@ Uygulama şu sorulara cevap verir:
 - Hangi varlıkların 24 saatlik hacmi artıyor veya azalıyor?
 - Takip edilen varlıkların kategorilerinde piyasa değeri baskısı hangi yönde?
 
-Mevcut sürümde dashboard, varlık ve kategori detay sayfaları, URL tabanlı arama/filtreleme/sıralama, health paneli, okuma API'leri ve kimlik doğrulamalı manuel scan endpoint'i bulunur.
+Mevcut sürüm piyasa değerine göre dinamik top 50 varlığı tarar. Dashboard ilk 25 filtrelenmiş sonucu gösterir ve kalanları isteğe bağlı olarak açar. Stablecoin'ler piyasa tablosu ve toplamlarına dahildir; fırsat sinyallerini domine etmemeleri için hacim/volatilite sinyal panellerinden çıkarılır. Dashboard ayrıca varlık ve kategori detay sayfaları, URL tabanlı arama/filtreleme/sıralama, health paneli, okuma API'leri ve kimlik doğrulamalı manuel scan endpoint'i içerir.
 
 ## Gerçek mimari
 
@@ -37,7 +37,7 @@ Frontend dış veri sağlayıcısına doğrudan istek atmaz. Ingestion başarıs
 
 ## Netlify'a yayınlama
 
-Netlify, Next.js web/API katmanını OpenNext adaptörüyle çalıştırır. Bu repository ayrıca Netlify üzerinde her 5 dakikada tetiklenen Scheduled Function ve ağır ingestion işini en fazla 15 dakika çalışabilen Background Function içerir. Bu nedenle Netlify deploy'unda ayrı bir BullMQ worker servisi zorunlu değildir; Docker/Render/Fly dağıtımlarında BullMQ worker kullanılmaya devam eder.
+Netlify, Next.js web/API katmanını OpenNext adaptörüyle çalıştırır. Bu repository ayrıca Netlify üzerinde her 10 dakikada tetiklenen Scheduled Function ve ağır ingestion işini en fazla 15 dakika çalışabilen Background Function içerir. Bu nedenle Netlify deploy'unda ayrı bir BullMQ worker servisi zorunlu değildir; Docker/Render/Fly dağıtımlarında BullMQ worker kullanılmaya devam eder.
 
 Bu uygulama statik bir site değildir. Netlify Drop'a `.next` klasörünü sürüklemek yerine repository'yi Git sağlayıcısından bağlayın veya Netlify CLI kullanın. Build ayarları [netlify.toml](netlify.toml) içindedir.
 
@@ -135,14 +135,14 @@ SONITUS_DATA_MODE=database npm run worker:scan
 | `DATABASE_URL` | Database modunda | PostgreSQL bağlantısı |
 | `REDIS_URL` | Production/worker | BullMQ veya Netlify ingestion ve dashboard hot cache bağlantısı |
 | `INTERNAL_JOB_TOKEN` | Ingestion/manual scan için | Production'da en az 32 karakter; yalnızca header ile gönderilir |
-| `SCAN_INTERVAL_MINUTES` | Hayır | Docker/BullMQ worker aralığı; varsayılan `5`. Netlify schedule sabit 5 dakikadır |
+| `SCAN_INTERVAL_MINUTES` | Hayır | Docker/BullMQ worker aralığı; varsayılan `5`. Netlify schedule ücretsiz CoinGecko Demo kotasına uyum için sabit 10 dakikadır |
 | `SCAN_STALE_MINUTES` | Hayır | Health ve UI stale eşiği; varsayılan `15` |
 | `SCAN_LOCK_SECONDS` | Hayır | Çakışan ingestion'ları engelleyen Redis lock TTL; varsayılan `1200` |
 | `METRIC_RETENTION_DAYS` | Hayır | Varsayılan `30` |
 | `VOLUME_BASELINE_TOLERANCE_MINUTES` | Hayır | 24 saatlik baseline toleransı; varsayılan `90` |
 | `CACHE_TTL_SECONDS` | Hayır | Redis dashboard cache TTL; varsayılan `900` |
 | `CATEGORY_CACHE_TTL_SECONDS` | Hayır | Coin kategori metadata cache süresi; varsayılan 7 gün |
-| `COINGECKO_SCAN_LIMIT` | Hayır | Taranan top varlık sayısı; varsayılan `25` |
+| `COINGECKO_SCAN_LIMIT` | Hayır | Piyasa değerine göre dinamik taranan top varlık sayısı; varsayılan `50` |
 | `COINGECKO_CONCURRENCY` | Hayır | Coin detay istek eşzamanlılığı; varsayılan `4` |
 | `COINGECKO_TIMEOUT_MS` | Hayır | İstek timeout; varsayılan `10000` |
 | `COINGECKO_MAX_RETRIES` | Hayır | 429/5xx/network retry sayısı; varsayılan `3` |
