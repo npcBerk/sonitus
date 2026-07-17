@@ -48,5 +48,7 @@ jobs:
       - run: npx prisma validate
       - run: npm run db:deploy
       - run: npm run db:seed
+      - run: npm run test:integration
       - run: npm run check
+      - run: npm run check:netlify
       - run: npm audit --omit=dev --audit-level=high

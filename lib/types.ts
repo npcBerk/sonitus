@@ -58,7 +58,7 @@ export type DashboardPayload = {
 export type DashboardFilters = {
   query: string;
   category: string;
-  sort: "volume" | "change24h" | "volatility" | "marketCap" | "volumeDelta" | "name";
+  sort: "volume" | "volMcap" | "change24h" | "volatility" | "marketCap" | "volumeDelta" | "name";
   minMarketCap: number;
   minVolume: number;
 };

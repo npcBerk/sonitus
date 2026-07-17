@@ -8,11 +8,16 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build && node scripts/prepare-standalone.mjs",
+    "build:netlify": "next build",
     "start": "node .next/standalone/server.js",
+    "postinstall": "prisma generate",
+    "preflight:production": "node scripts/production-preflight.mjs",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "test:integration": "SONITUS_DATA_MODE=mock tsx scripts/integration-check.ts",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "check:netlify": "npx --yes netlify-cli@26.2.0 build --offline && node scripts/verify-netlify-build.mjs",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
@@ -34,6 +39,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@netlify/functions": "^5.3.0",
     "@types/node": "^22.15.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

@@ -7,6 +7,7 @@ import { FilterBar } from "@/components/filter-bar";
 import { MetricCard } from "@/components/metric-card";
 import { UpdateStatusBadge } from "@/components/update-status-badge";
 import { VolumeDropPanel } from "@/components/volume-drop-panel";
+import { VolumeMarketCapPanel } from "@/components/volume-market-cap-panel";
 import { VolatilityPanel } from "@/components/volatility-panel";
 import { formatCompactCurrency, formatPercent, formatSignedPercent } from "@/lib/format";
 import { loadDashboardPayload, parseDashboardFilters } from "@/lib/dashboard";
@@ -113,6 +114,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             <CategoryRanking categories={payload.categories} />
           </div>
           <div className="space-y-6">
+            <VolumeMarketCapPanel assets={payload.highVolMcap} />
             <VolatilityPanel assets={payload.volatileAssets} />
             <VolumeDropPanel assets={payload.fallingVolume} />
           </div>

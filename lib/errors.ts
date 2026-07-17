@@ -15,3 +15,12 @@ export class DataUnavailableError extends Error {
     this.name = "DataUnavailableError";
   }
 }
+
+export class ScanAlreadyRunningError extends Error {
+  readonly code = "SCAN_ALREADY_RUNNING";
+
+  constructor() {
+    super("Another market snapshot is already running.");
+    this.name = "ScanAlreadyRunningError";
+  }
+}

@@ -62,3 +62,9 @@ test("filters combine search and category constraints", () => {
   assert.equal(filterAssets([asset], { query: "btc", category: category.id, sort: "name", minMarketCap: 0, minVolume: 0 }).length, 1);
   assert.equal(filterAssets([asset], { query: "eth", category: category.id, sort: "name", minMarketCap: 0, minVolume: 0 }).length, 0);
 });
+
+test("assets can be ranked by Volume / Market Cap signal", () => {
+  const highTurnover = { ...asset, id: "asset-2", providerId: "asset-2", symbol: "HOT", name: "High Turnover", currentMarketCap: 1_000, currentVolume: 500 };
+  const ranked = filterAssets([asset, highTurnover], { query: "", category: "all", sort: "volMcap", minMarketCap: 0, minVolume: 0 });
+  assert.equal(ranked[0].id, highTurnover.id);
+});

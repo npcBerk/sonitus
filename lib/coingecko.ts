@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 import { getRuntimeConfig } from "./config";
+import { ConfigurationError } from "./errors";
 import { logger } from "./logger";
+import { readCoinCategoryCache, writeCoinCategoryCache } from "./redis";
 
 type CoinGeckoApiMode = "public" | "demo" | "pro";
 
@@ -34,6 +36,12 @@ const coinDetailSchema = z.object({
     small: z.string().nullish(),
     large: z.string().nullish()
   })
+});
+
+const coinCategoryMetaSchema = z.object({
+  categoryId: z.string().min(1),
+  categoryName: z.string().min(1),
+  imageUrl: z.string()
 });
 
 export type LiveCoin = {
@@ -70,6 +78,7 @@ export type LiveSnapshot = {
 };
 
 const DEFAULT_BASE_URL = "https://api.coingecko.com/api/v3";
+const DEFAULT_PRO_BASE_URL = "https://pro-api.coingecko.com/api/v3";
 const GENERIC_CATEGORY_NAMES = new Set(["cryptocurrency", "token", "coin", "stablecoin"]);
 
 class ProviderHttpError extends Error {
@@ -98,15 +107,25 @@ function isGenericCategory(name: string) {
   return GENERIC_CATEGORY_NAMES.has(canonicalCategoryName(name).toLowerCase());
 }
 
+function apiMode(): CoinGeckoApiMode {
+  const rawMode = process.env.COINGECKO_API_MODE?.trim().toLowerCase();
+  if (!rawMode) return "public";
+  const parsed = z.enum(["public", "demo", "pro"]).safeParse(rawMode);
+  if (!parsed.success) throw new ConfigurationError("COINGECKO_API_MODE must be public, demo, or pro.");
+  return parsed.data;
+}
+
 function headersForMode(): Record<string, string> {
   const apiKey = process.env.COINGECKO_API_KEY?.trim();
-  const apiMode = z.enum(["public", "demo", "pro"]).catch("public").parse(process.env.COINGECKO_API_MODE?.trim().toLowerCase()) as CoinGeckoApiMode;
-  if (!apiKey || apiMode === "public") return {};
-  return apiMode === "demo" ? { "x-cg-demo-api-key": apiKey } : { "x-cg-pro-api-key": apiKey };
+  const mode = apiMode();
+  if (mode === "public") return {};
+  if (!apiKey) throw new ConfigurationError(`COINGECKO_API_KEY is required in ${mode} mode.`);
+  return mode === "demo" ? { "x-cg-demo-api-key": apiKey } : { "x-cg-pro-api-key": apiKey };
 }
 
 function providerUrl(pathname: string) {
-  const base = (process.env.COINGECKO_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const defaultBaseUrl = apiMode() === "pro" ? DEFAULT_PRO_BASE_URL : DEFAULT_BASE_URL;
+  const base = (process.env.COINGECKO_BASE_URL?.trim() || defaultBaseUrl).replace(/\/+$/, "");
   return new URL(pathname.replace(/^\/+/, ""), `${base}/`);
 }
 
@@ -118,6 +137,7 @@ function retryDelay(error: unknown, attempt: number) {
 }
 
 function isRetryable(error: unknown) {
+  if (error instanceof ConfigurationError) return false;
   return !(error instanceof ProviderHttpError) || error.status === 429 || error.status >= 500;
 }
 
@@ -179,6 +199,16 @@ async function fetchCategoryMarkets() {
 }
 
 async function fetchCategoryForCoin(coinId: string) {
+  const cached = await readCoinCategoryCache(coinId);
+  if (cached) {
+    try {
+      const parsed = coinCategoryMetaSchema.safeParse(JSON.parse(cached));
+      if (parsed.success) return parsed.data;
+    } catch {
+      // Invalid provider metadata cache entries are refreshed below.
+    }
+  }
+
   const detail = await requestJson(`/coins/${encodeURIComponent(coinId)}`, coinDetailSchema, {
     localization: false,
     tickers: false,
@@ -188,11 +218,13 @@ async function fetchCategoryForCoin(coinId: string) {
     sparkline: false
   });
   const candidate = detail.categories.find((category) => !isGenericCategory(category)) ?? detail.categories[0] ?? "Uncategorized";
-  return {
+  const categoryMeta = coinCategoryMetaSchema.parse({
     categoryId: slugifyCategoryName(candidate) || "uncategorized",
     categoryName: canonicalCategoryName(candidate) || "Uncategorized",
     imageUrl: detail.image.small || detail.image.thumb || detail.image.large || ""
-  };
+  });
+  await writeCoinCategoryCache(coinId, JSON.stringify(categoryMeta));
+  return categoryMeta;
 }
 
 async function mapWithConcurrency<T, R>(values: T[], concurrency: number, mapper: (value: T) => Promise<R>): Promise<R[]> {

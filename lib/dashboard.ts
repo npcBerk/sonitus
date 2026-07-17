@@ -11,7 +11,7 @@ import { getPrismaClient } from "./prisma";
 import { readDashboardCache } from "./redis";
 import type { Asset, Category, DashboardFilters, DashboardPayload, ScanJob } from "./types";
 
-const sortSchema = z.enum(["volume", "change24h", "volatility", "marketCap", "volumeDelta", "name"]);
+const sortSchema = z.enum(["volume", "volMcap", "change24h", "volatility", "marketCap", "volumeDelta", "name"]);
 
 export const dashboardFiltersSchema = z.object({
   query: z.string().trim().max(100).default(""),
@@ -187,6 +187,8 @@ export function filterAssets(assets: Asset[], filters: DashboardFilters) {
       switch (filters.sort) {
         case "change24h":
           return b.change24h - a.change24h;
+        case "volMcap":
+          return b.volMcapRatio - a.volMcapRatio;
         case "volatility":
           return b.volatilityScore - a.volatilityScore;
         case "marketCap":

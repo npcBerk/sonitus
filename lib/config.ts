@@ -30,7 +30,9 @@ export function getRuntimeConfig() {
     providerTimeoutMs: positiveInteger(10_000).parse(process.env.COINGECKO_TIMEOUT_MS),
     providerMaxRetries: z.coerce.number().int().min(0).max(6).catch(3).parse(process.env.COINGECKO_MAX_RETRIES),
     cacheTtlSeconds: positiveInteger(900).parse(process.env.CACHE_TTL_SECONDS),
+    categoryCacheTtlSeconds: positiveInteger(604_800).parse(process.env.CATEGORY_CACHE_TTL_SECONDS),
     scanStaleMinutes: positiveInteger(15).parse(process.env.SCAN_STALE_MINUTES),
+    scanLockSeconds: positiveInteger(1_200).parse(process.env.SCAN_LOCK_SECONDS),
     metricRetentionDays: positiveInteger(30).parse(process.env.METRIC_RETENTION_DAYS),
     volumeBaselineToleranceMinutes: positiveInteger(90).parse(process.env.VOLUME_BASELINE_TOLERANCE_MINUTES)
   };

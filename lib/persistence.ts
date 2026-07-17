@@ -340,7 +340,7 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
     await writeDashboardCache(payload);
     return { assets: payload.coins.length, categories: payload.categories.length, payload };
   } catch (error) {
-    await failScanJob(prisma, context, error);
+    if (!existingContext) await failScanJob(prisma, context, error);
     throw error;
   }
 }

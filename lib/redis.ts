@@ -1,4 +1,5 @@
 import IORedis from "ioredis";
+import { randomUUID } from "node:crypto";
 
 import { getRuntimeConfig } from "./config";
 import { logger } from "./logger";
@@ -9,6 +10,8 @@ declare global {
 }
 
 const DASHBOARD_CACHE_KEY = "sonitus:dashboard:v1";
+const COIN_CATEGORY_CACHE_PREFIX = "sonitus:coin-category:v1:";
+const MARKET_SCAN_LOCK_KEY = "sonitus:market-scan:lock:v1";
 
 export function getRedisClient() {
   const redisUrl = process.env.REDIS_URL?.trim();
@@ -69,4 +72,62 @@ export async function pingRedis() {
   } catch {
     return false;
   }
+}
+
+export async function readCoinCategoryCache(providerId: string) {
+  const client = getRedisClient();
+  if (!client) return null;
+  try {
+    await ensureConnected(client);
+    return await client.get(`${COIN_CATEGORY_CACHE_PREFIX}${providerId}`);
+  } catch (error) {
+    logger.warn({ err: error, providerId }, "Redis coin category cache read failed");
+    return null;
+  }
+}
+
+export async function writeCoinCategoryCache(providerId: string, payload: string) {
+  const client = getRedisClient();
+  if (!client) return false;
+  try {
+    await ensureConnected(client);
+    await client.set(`${COIN_CATEGORY_CACHE_PREFIX}${providerId}`, payload, "EX", getRuntimeConfig().categoryCacheTtlSeconds);
+    return true;
+  } catch (error) {
+    logger.warn({ err: error, providerId }, "Redis coin category cache write failed");
+    return false;
+  }
+}
+
+export async function disconnectRedisClient() {
+  const client = globalThis.__sonitusRedis;
+  if (!client) return;
+  try {
+    if (client.status !== "end") await client.quit();
+  } catch {
+    client.disconnect();
+  } finally {
+    globalThis.__sonitusRedis = undefined;
+  }
+}
+
+export async function acquireMarketScanLock() {
+  const client = getRedisClient();
+  if (!client) throw new Error("REDIS_URL is required for the market scan lock.");
+  await ensureConnected(client);
+  const token = randomUUID();
+  const acquired = await client.set(MARKET_SCAN_LOCK_KEY, token, "EX", getRuntimeConfig().scanLockSeconds, "NX");
+  return acquired === "OK" ? token : null;
+}
+
+export async function releaseMarketScanLock(token: string) {
+  const client = getRedisClient();
+  if (!client) return;
+  await ensureConnected(client);
+  await client.eval(
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+    1,
+    MARKET_SCAN_LOCK_KEY,
+    token
+  );
 }
