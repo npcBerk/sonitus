@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { MetricCard } from "@/components/metric-card";
 import { UpdateStatusBadge } from "@/components/update-status-badge";
 import { loadAssetById, loadDashboardPayload } from "@/lib/dashboard";
-import { formatClock, formatCompactCurrency, formatPrice, formatSignedPercent } from "@/lib/format";
+import { formatClock, formatCompactCurrency, formatDetailedPrice, formatSignedPercent } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +46,7 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Price" value={formatPrice(asset.lastPrice)} kind="text" tone="cyan" />
+        <MetricCard label="Price" value={formatDetailedPrice(asset.lastPrice)} kind="text" tone="cyan" />
         <MetricCard label="24h change" value={asset.change24h} kind="signedPercent" tone="emerald" />
         <MetricCard label="Volume / MCap" value={volMcap * 100} kind="percent" tone="violet" help="Share of turnover versus market value" />
         <MetricCard label="Volume delta" value={asset.volumeDelta24h} kind="signedPercent" tone="amber" />

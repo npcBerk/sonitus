@@ -4,6 +4,7 @@ import test from "node:test";
 import { getVisibleAssets, shouldShowAssetsToggle, sortAssets } from "../components/assets-table";
 import { getRuntimeConfig } from "../lib/config";
 import { createDashboardPayload, filterAssets, parseDashboardFilters, validateDashboardFilters } from "../lib/dashboard";
+import { formatDetailedPrice } from "../lib/format";
 import type { Asset, Category, ScanJob } from "../lib/types";
 
 const now = new Date().toISOString();
@@ -149,4 +150,9 @@ test("asset table columns can be sorted in both directions without mutating the 
   assert.deepEqual(sortAssets(source, "price", "desc").map((item) => item.name), ["Bitcoin", "Ethereum"]);
   assert.deepEqual(sortAssets(source, "volMcap", "desc").map((item) => item.name), ["Ethereum", "Bitcoin"]);
   assert.deepEqual(source.map((item) => item.name), ["Ethereum", "Bitcoin"]);
+});
+
+test("asset detail prices use full Turkish number formatting", () => {
+  assert.equal(formatDetailedPrice(63_109.58), "$63.109,58");
+  assert.equal(formatDetailedPrice(0.0000123), "$0,0000123");
 });

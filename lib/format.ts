@@ -52,6 +52,16 @@ export function formatPrice(value: number) {
   }).format(value);
 }
 
+export function formatDetailedPrice(value: number) {
+  const fractionDigits = value >= 1 ? 2 : 8;
+  const formattedValue = new Intl.NumberFormat("tr-TR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: fractionDigits
+  }).format(value);
+
+  return `$${formattedValue}`;
+}
+
 export function formatCompactNumber(value: number) {
   return compactNumber.format(value);
 }
