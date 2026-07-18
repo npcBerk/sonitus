@@ -7,6 +7,7 @@ import type { DashboardPayload } from "./types";
 
 declare global {
   var __sonitusRedis: IORedis | undefined;
+  var __sonitusRedisConnectPromise: Promise<void> | undefined;
 }
 
 const DASHBOARD_CACHE_KEY = "sonitus:dashboard:v1";
@@ -22,6 +23,7 @@ export function getRedisClient() {
   // Discard a closed client so a later request can make a fresh attempt.
   if (globalThis.__sonitusRedis?.status === "end") {
     globalThis.__sonitusRedis = undefined;
+    globalThis.__sonitusRedisConnectPromise = undefined;
   }
 
   if (!globalThis.__sonitusRedis) {
@@ -40,7 +42,44 @@ export function getRedisClient() {
 }
 
 async function ensureConnected(client: IORedis) {
-  if (client.status === "wait") await client.connect();
+  if (client.status === "ready") return;
+
+  if (!globalThis.__sonitusRedisConnectPromise) {
+    const connection =
+      client.status === "wait"
+        ? client.connect()
+        : new Promise<void>((resolve, reject) => {
+          const cleanup = () => {
+            client.off("ready", handleReady);
+            client.off("error", handleError);
+            client.off("end", handleEnd);
+          };
+          const handleReady = () => {
+            cleanup();
+            resolve();
+          };
+          const handleError = (error: Error) => {
+            cleanup();
+            reject(error);
+          };
+          const handleEnd = () => {
+            cleanup();
+            reject(new Error("Redis connection closed before becoming ready."));
+          };
+
+          client.once("ready", handleReady);
+          client.once("error", handleError);
+          client.once("end", handleEnd);
+        });
+    const trackedConnection = connection.finally(() => {
+      if (globalThis.__sonitusRedisConnectPromise === trackedConnection) {
+        globalThis.__sonitusRedisConnectPromise = undefined;
+      }
+    });
+    globalThis.__sonitusRedisConnectPromise = trackedConnection;
+  }
+
+  await globalThis.__sonitusRedisConnectPromise;
 }
 
 export async function readDashboardCache() {
@@ -91,6 +130,7 @@ export async function disconnectRedisClient() {
     client.disconnect();
   } finally {
     globalThis.__sonitusRedis = undefined;
+    globalThis.__sonitusRedisConnectPromise = undefined;
   }
 }
 
