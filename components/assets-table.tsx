@@ -105,7 +105,7 @@ function SortableHeader({ label, sortKey, activeSortKey, direction, onSort }: So
   const isActive = activeSortKey === sortKey;
 
   return (
-    <th className="px-4 py-4 font-medium" aria-sort={isActive ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+    <th className="px-3 py-2 font-medium" aria-sort={isActive ? (direction === "asc" ? "ascending" : "descending") : "none"}>
       <button
         type="button"
         className="group inline-flex items-center gap-2 whitespace-nowrap transition hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70"
@@ -164,20 +164,20 @@ export function AssetsTable({ assets }: AssetsTableProps) {
   }
 
   return (
-    <section className="sonitus-panel overflow-hidden">
-      <div className="border-b border-white/10 px-5 py-4">
+    <section id="volume-table" className="sonitus-panel scroll-mt-4 overflow-hidden">
+      <div className="border-b border-white/[0.07] px-4 py-3">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Tracked universe</p>
-            <h2 className="mt-2 text-xl font-semibold text-slate-50">24h volume delta screen</h2>
+            <p className="text-[9px] uppercase tracking-[0.3em] text-slate-400">Tracked universe</p>
+            <h2 className="mt-1.5 text-base font-semibold text-slate-50">24h volume delta screen</h2>
           </div>
-          <p className="text-sm text-slate-400">{visibleAssets.length} / {assets.length} results</p>
+          <p className="text-xs text-slate-400">{visibleAssets.length} / {assets.length} results</p>
         </div>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1500px]">
-          <thead className="bg-white/3 text-left text-[10px] uppercase tracking-[0.22em] text-slate-400">
+        <table className="w-full min-w-[1180px] font-mono">
+          <thead className="bg-white/3 text-left text-[9px] uppercase tracking-[0.14em] text-slate-400">
             <tr>
               <SortableHeader label="Asset" sortKey="name" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
               <SortableHeader label="Price" sortKey="price" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
@@ -189,32 +189,27 @@ export function AssetsTable({ assets }: AssetsTableProps) {
               <SortableHeader label="Vol/MCap" sortKey="volMcap" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
               <SortableHeader label="1h price" sortKey="change1h" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
               <SortableHeader label="24h price" sortKey="change24h" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
-              <th className="px-4 py-4 font-medium">Data status</th>
+              <th className="px-3 py-2 font-medium">Data status</th>
             </tr>
           </thead>
           <tbody>
             {visibleAssets.map((asset) => (
               <tr key={asset.id} className="border-t border-white/5 transition hover:bg-white/[0.03]">
-                <td className="px-4 py-4">
-                  <Link href={`/assets/${asset.id}`} className="group flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-xs font-semibold text-cyan-100">
-                      {asset.symbol.slice(0, 4)}
-                    </div>
-                    <div>
-                      <p className="font-medium text-slate-50 group-hover:text-cyan-200">{asset.name}</p>
-                      <p className="text-xs text-slate-500">{asset.symbol}</p>
-                    </div>
+                <td className="px-3 py-1.5">
+                  <Link href={`/assets/${asset.id}`} className="group whitespace-nowrap text-xs font-semibold text-slate-50 hover:text-cyan-200">
+                    {asset.symbol}
+                    <span className="ml-2 font-sans text-[10px] font-normal text-slate-500 group-hover:text-slate-400">{asset.name}</span>
                   </Link>
                 </td>
-                <td className="whitespace-nowrap px-4 py-4 text-sm font-medium text-slate-100">
+                <td className="whitespace-nowrap px-3 py-1.5 text-xs font-medium text-slate-100">
                   {formatDetailedPrice(asset.lastPrice)}
                 </td>
-                <td className="px-4 py-4 text-sm text-slate-100">{formatCompactCurrency(asset.currentVolume)}</td>
-                <td className="px-4 py-4 text-sm text-slate-300">
+                <td className="whitespace-nowrap px-3 py-1.5 text-xs text-slate-100">{formatCompactCurrency(asset.currentVolume)}</td>
+                <td className="whitespace-nowrap px-3 py-1.5 text-xs text-slate-300">
                   {asset.baselineVolume === null ? "—" : formatCompactCurrency(asset.baselineVolume)}
                 </td>
                 <td
-                  className={`px-4 py-4 text-sm font-semibold ${
+                  className={`whitespace-nowrap px-3 py-1.5 text-xs font-semibold ${
                     asset.volumeDelta24h === null
                       ? "text-slate-500"
                       : asset.volumeDelta24h >= 0
@@ -225,21 +220,21 @@ export function AssetsTable({ assets }: AssetsTableProps) {
                 >
                   {asset.volumeDelta24h === null ? "—" : formatSignedPercent(asset.volumeDelta24h)}
                 </td>
-                <td className="px-4 py-4 text-sm text-slate-300">
+                <td className="whitespace-nowrap px-3 py-1.5 text-xs text-slate-300">
                   {asset.absoluteVolumeDelta === null ? "—" : formatCompactCurrency(asset.absoluteVolumeDelta)}
                 </td>
-                <td className="px-4 py-4 text-sm font-semibold text-cyan-200">
+                <td className="px-3 py-1.5 text-xs font-semibold text-cyan-200">
                   {asset.volumeSignalScore?.toFixed(1) ?? "—"}
                 </td>
-                <td className="px-4 py-4 text-sm text-slate-300">{volumeMarketCapRatio(asset).toFixed(3)}</td>
-                <td className={`px-4 py-4 text-sm font-medium ${asset.change1h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                <td className="px-3 py-1.5 text-xs text-slate-300">{volumeMarketCapRatio(asset).toFixed(3)}</td>
+                <td className={`px-3 py-1.5 text-xs font-medium ${asset.change1h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                   {formatSignedPercent(asset.change1h)}
                 </td>
-                <td className={`px-4 py-4 text-sm font-medium ${asset.change24h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                <td className={`px-3 py-1.5 text-xs font-medium ${asset.change24h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
                   {formatSignedPercent(asset.change24h)}
                 </td>
-                <td className="px-4 py-4">
-                  <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] ${statusClasses[asset.baselineStatus]}`}>
+                <td className="px-3 py-1.5">
+                  <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[8px] uppercase tracking-[0.1em] ${statusClasses[asset.baselineStatus]}`}>
                     {statusLabels[asset.baselineStatus]}
                   </span>
                 </td>
@@ -250,10 +245,10 @@ export function AssetsTable({ assets }: AssetsTableProps) {
       </div>
 
       {shouldShowAssetsToggle(assets.length) ? (
-        <div className="border-t border-white/10 px-5 py-4 text-center">
+        <div className="border-t border-white/10 px-4 py-3 text-center">
           <button
             type="button"
-            className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 px-5 py-3 text-sm font-medium text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-300/15"
+            className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-xs font-medium text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-300/15"
             onClick={() => setShowAll((current) => !current)}
           >
             {showAll ? "Show fewer assets" : `Show ${hiddenCount} more assets`}

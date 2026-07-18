@@ -30,10 +30,10 @@ export function MetricCard({ label, value, help, tone = "cyan", kind = "text" }:
       : value;
 
   return (
-    <article className={`rounded-3xl border border-white/10 bg-gradient-to-br p-4 shadow-glow ${toneClasses[tone]}`}>
-      <p className="text-[10px] uppercase tracking-[0.35em] text-slate-300/70">{label}</p>
-      <p className="mt-3 text-2xl font-semibold text-slate-50 sm:text-3xl">{renderedValue}</p>
-      {help ? <p className="mt-2 text-sm text-slate-300/80">{help}</p> : null}
+    <article className={`rounded-xl border border-white/10 bg-gradient-to-br p-3 shadow-glow ${toneClasses[tone]}`}>
+      <p className="text-[9px] uppercase tracking-[0.28em] text-slate-300/70">{label}</p>
+      <p className="mt-2 text-xl font-semibold text-slate-50">{renderedValue}</p>
+      {help ? <p className="mt-1.5 text-xs leading-4 text-slate-300/80">{help}</p> : null}
     </article>
   );
 }

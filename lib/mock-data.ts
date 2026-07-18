@@ -1,4 +1,4 @@
-import type { Asset, Category, ScanJob } from "@/lib/types";
+import type { Asset, ScanJob } from "@/lib/types";
 
 const now = () => new Date().toISOString();
 
@@ -19,7 +19,6 @@ const baseAssets: MockAsset[] = [
     providerId: "bitcoin",
     symbol: "BTC",
     name: "Bitcoin",
-    categoryId: "layer-1",
     rank: 1,
     lastPrice: 108442,
     currentMarketCap: 1_290_000_000_000,
@@ -35,7 +34,6 @@ const baseAssets: MockAsset[] = [
     providerId: "ethereum",
     symbol: "ETH",
     name: "Ethereum",
-    categoryId: "layer-1",
     rank: 2,
     lastPrice: 5246,
     currentMarketCap: 410_000_000_000,
@@ -51,7 +49,6 @@ const baseAssets: MockAsset[] = [
     providerId: "solana",
     symbol: "SOL",
     name: "Solana",
-    categoryId: "layer-1",
     rank: 3,
     lastPrice: 147.55,
     currentMarketCap: 89_000_000_000,
@@ -67,7 +64,6 @@ const baseAssets: MockAsset[] = [
     providerId: "binancecoin",
     symbol: "BNB",
     name: "BNB",
-    categoryId: "defi",
     rank: 4,
     lastPrice: 614.31,
     currentMarketCap: 74_000_000_000,
@@ -83,7 +79,6 @@ const baseAssets: MockAsset[] = [
     providerId: "ripple",
     symbol: "XRP",
     name: "XRP",
-    categoryId: "payments",
     rank: 5,
     lastPrice: 0.73,
     currentMarketCap: 61_000_000_000,
@@ -99,7 +94,6 @@ const baseAssets: MockAsset[] = [
     providerId: "dogecoin",
     symbol: "DOGE",
     name: "Dogecoin",
-    categoryId: "memes",
     rank: 6,
     lastPrice: 0.18,
     currentMarketCap: 22_000_000_000,
@@ -115,7 +109,6 @@ const baseAssets: MockAsset[] = [
     providerId: "sui",
     symbol: "SUI",
     name: "Sui",
-    categoryId: "layer-1",
     rank: 7,
     lastPrice: 1.98,
     currentMarketCap: 18_000_000_000,
@@ -131,7 +124,6 @@ const baseAssets: MockAsset[] = [
     providerId: "bittensor",
     symbol: "TAO",
     name: "Bittensor",
-    categoryId: "ai",
     rank: 8,
     lastPrice: 418.2,
     currentMarketCap: 12_000_000_000,
@@ -147,7 +139,6 @@ const baseAssets: MockAsset[] = [
     providerId: "render",
     symbol: "RNDR",
     name: "Render",
-    categoryId: "ai",
     rank: 9,
     lastPrice: 6.12,
     currentMarketCap: 8_400_000_000,
@@ -163,7 +154,6 @@ const baseAssets: MockAsset[] = [
     providerId: "pepe",
     symbol: "PEPE",
     name: "Pepe",
-    categoryId: "memes",
     rank: 10,
     lastPrice: 0.0000123,
     currentMarketCap: 6_900_000_000,
@@ -179,7 +169,6 @@ const baseAssets: MockAsset[] = [
     providerId: "aptos",
     symbol: "APT",
     name: "Aptos",
-    categoryId: "layer-1",
     rank: 11,
     lastPrice: 11.4,
     currentMarketCap: 11_000_000_000,
@@ -195,7 +184,6 @@ const baseAssets: MockAsset[] = [
     providerId: "avalanche",
     symbol: "AVAX",
     name: "Avalanche",
-    categoryId: "infra",
     rank: 12,
     lastPrice: 39.2,
     currentMarketCap: 14_000_000_000,
@@ -206,15 +194,6 @@ const baseAssets: MockAsset[] = [
     sparkline: [22, 23, 25, 26, 28, 30, 31, 33],
     updatedAt: now()
   }
-];
-
-export const categorySeedData: Omit<Category, "marketCapChange24h" | "assetCount" | "updatedAt">[] = [
-  { id: "layer-1", providerId: "layer-1", name: "Layer 1" },
-  { id: "defi", providerId: "defi", name: "DeFi" },
-  { id: "memes", providerId: "memes", name: "Memes" },
-  { id: "ai", providerId: "ai", name: "AI" },
-  { id: "infra", providerId: "infra", name: "Infrastructure" },
-  { id: "payments", providerId: "payments", name: "Payments" }
 ];
 
 export const baseScanJob: ScanJob = {

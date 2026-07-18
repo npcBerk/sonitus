@@ -57,7 +57,6 @@ export default async function HealthPage() {
             <p>Readiness: <span className="text-slate-50">/api/health</span></p>
             <p>Snapshot: <span className="text-slate-50">/api/dashboard</span></p>
             <p>Assets: <span className="text-slate-50">/api/assets</span></p>
-            <p>Categories: <span className="text-slate-50">/api/categories</span></p>
             <p>Latest scan: <span className="text-slate-50">/api/scans/latest</span></p>
           </div>
         </div>

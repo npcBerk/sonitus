@@ -10,7 +10,6 @@ declare global {
 }
 
 const DASHBOARD_CACHE_KEY = "sonitus:dashboard:v1";
-const COIN_CATEGORY_CACHE_PREFIX = "sonitus:coin-category:v1:";
 const MARKET_SCAN_LOCK_KEY = "sonitus:market-scan:lock:v1";
 
 export function getRedisClient() {
@@ -79,31 +78,6 @@ export async function pingRedis() {
     await ensureConnected(client);
     return (await client.ping()) === "PONG";
   } catch {
-    return false;
-  }
-}
-
-export async function readCoinCategoryCache(providerId: string) {
-  const client = getRedisClient();
-  if (!client) return null;
-  try {
-    await ensureConnected(client);
-    return await client.get(`${COIN_CATEGORY_CACHE_PREFIX}${providerId}`);
-  } catch (error) {
-    logger.warn({ err: error, providerId }, "Redis coin category cache read failed");
-    return null;
-  }
-}
-
-export async function writeCoinCategoryCache(providerId: string, payload: string) {
-  const client = getRedisClient();
-  if (!client) return false;
-  try {
-    await ensureConnected(client);
-    await client.set(`${COIN_CATEGORY_CACHE_PREFIX}${providerId}`, payload, "EX", getRuntimeConfig().categoryCacheTtlSeconds);
-    return true;
-  } catch (error) {
-    logger.warn({ err: error, providerId }, "Redis coin category cache write failed");
     return false;
   }
 }

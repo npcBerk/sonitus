@@ -5,7 +5,7 @@ import { getVisibleAssets, shouldShowAssetsToggle, sortAssets } from "../compone
 import { getRuntimeConfig } from "../lib/config";
 import { createDashboardPayload, filterAssets, parseDashboardFilters, validateDashboardFilters } from "../lib/dashboard";
 import { formatDetailedPrice } from "../lib/format";
-import type { Asset, Category, ScanJob } from "../lib/types";
+import type { Asset, ScanJob } from "../lib/types";
 
 const now = new Date().toISOString();
 const scan: ScanJob = {
@@ -17,20 +17,11 @@ const scan: ScanJob = {
   processedCount: 1,
   errorMessage: null
 };
-const category: Category = {
-  id: "category-1",
-  providerId: "layer-1",
-  name: "Layer 1",
-  marketCapChange24h: 1,
-  assetCount: 1,
-  updatedAt: now
-};
 const asset: Asset = {
   id: "asset-1",
   providerId: "bitcoin",
   symbol: "BTC",
   name: "Bitcoin",
-  categoryId: category.id,
   rank: 1,
   lastPrice: 1,
   currentMarketCap: 0,
@@ -54,7 +45,6 @@ test("invalid public filters are rejected while pages fall back safely", () => {
   assert.equal(validateDashboardFilters(raw).success, false);
   assert.deepEqual(parseDashboardFilters(raw), {
     query: "",
-    category: "all",
     sort: "signal",
     minMarketCap: 0,
     minVolume: 0
@@ -62,20 +52,20 @@ test("invalid public filters are rejected while pages fall back safely", () => {
 });
 
 test("dashboard calculations never emit Infinity for zero market cap", () => {
-  const payload = createDashboardPayload([asset], [category], scan, now);
+  const payload = createDashboardPayload([asset], scan, now);
   assert.equal(payload.summary.averageVolMcap, 0);
   assert.deepEqual(payload.highVolMcap, []);
   assert.doesNotThrow(() => JSON.stringify(payload));
 });
 
-test("filters combine search and category constraints", () => {
-  assert.equal(filterAssets([asset], { query: "btc", category: category.id, sort: "name", minMarketCap: 0, minVolume: 0 }).length, 1);
-  assert.equal(filterAssets([asset], { query: "eth", category: category.id, sort: "name", minMarketCap: 0, minVolume: 0 }).length, 0);
+test("filters combine search and market constraints", () => {
+  assert.equal(filterAssets([asset], { query: "btc", sort: "name", minMarketCap: 0, minVolume: 0 }).length, 1);
+  assert.equal(filterAssets([asset], { query: "eth", sort: "name", minMarketCap: 0, minVolume: 0 }).length, 0);
 });
 
 test("assets can be ranked by Volume / Market Cap signal", () => {
   const highTurnover = { ...asset, id: "asset-2", providerId: "asset-2", symbol: "HOT", name: "High Turnover", currentMarketCap: 1_000, currentVolume: 500 };
-  const ranked = filterAssets([asset, highTurnover], { query: "", category: "all", sort: "volMcap", minMarketCap: 0, minVolume: 0 });
+  const ranked = filterAssets([asset, highTurnover], { query: "", sort: "volMcap", minMarketCap: 0, minVolume: 0 });
   assert.equal(ranked[0].id, highTurnover.id);
 });
 
@@ -93,20 +83,12 @@ test("runtime config scans 250 volume-ranked assets by default and supports an o
 });
 
 test("stablecoins are excluded from every dashboard surface and market total", () => {
-  const stablecoinCategory: Category = {
-    ...category,
-    id: "category-stablecoins",
-    providerId: "stablecoins",
-    name: "Stablecoins",
-    assetCount: 1
-  };
   const stablecoin: Asset = {
     ...asset,
     id: "asset-usdt",
     providerId: "tether",
     symbol: "USDT",
     name: "Tether",
-    categoryId: stablecoinCategory.id,
     currentMarketCap: 100_000_000,
     currentVolume: 90_000_000,
     baselineVolume: 180_000_000,
@@ -126,16 +108,14 @@ test("stablecoins are excluded from every dashboard surface and market total", (
 
   const payload = createDashboardPayload(
     [stablecoin, bitcoin],
-    [stablecoinCategory, category],
     scan,
     now,
-    { query: "", category: "all", sort: "name", minMarketCap: 0, minVolume: 0 }
+    { query: "", sort: "name", minMarketCap: 0, minVolume: 0 }
   );
 
   assert.equal(payload.coins.length, 1);
   assert.equal(payload.summary.totalAssets, 1);
   assert.equal(payload.summary.totalVolume, 50_000_000);
-  assert.equal(payload.categories.some((item) => item.id === stablecoinCategory.id), false);
   assert.equal(payload.topVolumeAsset?.id, bitcoin.id);
   assert.equal(payload.highVolMcap.some((item) => item.id === stablecoin.id), false);
   assert.equal(payload.volatileAssets.some((item) => item.id === stablecoin.id), false);
@@ -179,7 +159,6 @@ test("rising and falling panels are mutually exclusive, ready-only, and score-ra
 
   const payload = createDashboardPayload(
     [weakerRise, falling, warming, strongerRise],
-    [category],
     scan,
     now
   );
@@ -204,7 +183,7 @@ test("liquidity policy accepts baseline-supported contractions and rejects low m
   const lowMarketCap = { ...baselineSupported, id: "low-mcap", providerId: "low-mcap", currentMarketCap: 20_000_000 };
   const lowVolume = { ...baselineSupported, id: "low-volume", providerId: "low-volume", currentVolume: 1_000_000, baselineVolume: 2_000_000 };
 
-  const payload = createDashboardPayload([baselineSupported, lowMarketCap, lowVolume], [category], scan, now);
+  const payload = createDashboardPayload([baselineSupported, lowMarketCap, lowVolume], scan, now);
   assert.deepEqual(payload.coins.map((item) => item.id), ["baseline-supported"]);
 });
 

@@ -31,9 +31,51 @@ a {
 }
 
 .sonitus-panel {
-  border-radius: 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(8, 15, 31, 0.82);
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.06), 0 24px 80px rgba(2, 6, 23, 0.55);
-  backdrop-filter: blur(20px);
+  border-radius: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(8, 15, 29, 0.78);
+  box-shadow: 0 12px 36px rgba(2, 6, 23, 0.24);
+  backdrop-filter: blur(16px);
+}
+
+.signal-label {
+  font-size: 0.5rem;
+  line-height: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgb(100 116 139);
+}
+
+.signal-value {
+  margin-top: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 600;
+  color: rgb(226 232 240);
+}
+
+.compact-control {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(2, 6, 23, 0.62);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: rgb(241 245 249);
+  outline: none;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.compact-control::placeholder {
+  color: rgb(71 85 105);
+}
+
+.compact-control:focus {
+  border-color: rgba(103, 232, 249, 0.5);
+  background: rgba(2, 6, 23, 0.82);
 }

@@ -5,7 +5,6 @@ export type Asset = {
   providerId: string;
   symbol: string;
   name: string;
-  categoryId: string;
   rank: number;
   lastPrice: number;
   currentMarketCap: number;
@@ -21,15 +20,6 @@ export type Asset = {
   candidateLastSeenAt: string | null;
   trackedUntil: string | null;
   sparkline: number[];
-  updatedAt: string;
-};
-
-export type Category = {
-  id: string;
-  providerId: string;
-  name: string;
-  marketCapChange24h: number;
-  assetCount: number;
   updatedAt: string;
 };
 
@@ -49,7 +39,6 @@ export type DashboardSummary = {
   totalVolume: number;
   averageChange24h: number;
   averageVolMcap: number;
-  leadingCategory: string;
   readyAssets: number;
   baselineReadyPercent: number;
 };
@@ -59,7 +48,6 @@ export type DashboardPayload = {
   updatedAt: string;
   summary: DashboardSummary;
   coins: Asset[];
-  categories: Category[];
   topVolumeAsset: Asset | null;
   risingVolume: Asset[];
   highVolMcap: Asset[];
@@ -70,7 +58,6 @@ export type DashboardPayload = {
 
 export type DashboardFilters = {
   query: string;
-  category: string;
   sort: "signal" | "volume" | "volMcap" | "change24h" | "volatility" | "marketCap" | "volumeDelta" | "name";
   minMarketCap: number;
   minVolume: number;

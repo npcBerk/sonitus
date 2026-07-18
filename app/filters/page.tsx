@@ -15,10 +15,9 @@ export default async function FiltersPage({ searchParams }: PageProps) {
   const filters = parseDashboardFilters(resolvedSearchParams);
   const payload = await loadDashboardPayload(filters);
 
-  const leadingCategory = payload.categories.find((category) => category.assetCount > 0);
   const examples = [
     { label: "Strongest volume shocks", href: "/?sort=signal" },
-    { label: leadingCategory ? `High volume ${leadingCategory.name}` : "High volume assets", href: leadingCategory ? `/?category=${encodeURIComponent(leadingCategory.providerId)}&sort=volume&minVolume=1000000000` : "/?sort=volume&minVolume=1000000000" },
+    { label: "High volume assets", href: "/?sort=volume&minVolume=1000000000" },
     { label: "Volatility leaders", href: "/?sort=volatility" },
   ];
 
@@ -28,10 +27,10 @@ export default async function FiltersPage({ searchParams }: PageProps) {
         <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Advanced filters</p>
         <h2 className="mt-3 text-3xl font-semibold text-slate-50">Signal recipes for the dashboard</h2>
         <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
-          Search, category, sorting, and market thresholds are evaluated by the server against the latest persisted snapshot. Filter state stays URL-addressable and shareable.
+          Search, sorting, and market thresholds are evaluated by the server against the latest persisted snapshot. Filter state stays URL-addressable and shareable.
         </p>
         <div className="mt-6">
-          <FilterBar filters={filters} categories={payload.categories} />
+          <FilterBar filters={filters} />
         </div>
       </section>
 

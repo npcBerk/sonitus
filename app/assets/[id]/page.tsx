@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { MetricCard } from "@/components/metric-card";
 import { UpdateStatusBadge } from "@/components/update-status-badge";
-import { loadAssetById, loadDashboardPayload } from "@/lib/dashboard";
+import { loadAssetById } from "@/lib/dashboard";
 import { formatClock, formatCompactCurrency, formatDetailedPrice, formatSignedPercent } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +17,6 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
   const asset = await loadAssetById(id);
   if (!asset) notFound();
 
-  const payload = await loadDashboardPayload();
-  const related = payload.coins.filter((item) => item.categoryId === asset.categoryId && item.id !== asset.id).slice(0, 4);
   const volMcap = asset.currentMarketCap > 0 ? asset.currentVolume / asset.currentMarketCap : 0;
 
   return (
@@ -35,7 +33,7 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
             <p className="text-xs uppercase tracking-[0.4em] text-slate-400">{asset.symbol}</p>
             <h2 className="mt-3 text-4xl font-semibold text-slate-50">{asset.name}</h2>
             <p className="mt-3 text-sm text-slate-300">
-              Category: <span className="text-slate-50">{asset.categoryId}</span> • Provider id: <span className="text-slate-50">{asset.providerId}</span>
+              Provider id: <span className="text-slate-50">{asset.providerId}</span>
             </p>
           </div>
           <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-4">
@@ -117,23 +115,6 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
         </div>
       </section>
 
-      <section className="sonitus-panel p-6">
-        <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Peers</p>
-        <h3 className="mt-2 text-xl font-semibold text-slate-50">Related assets in the same category</h3>
-        <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {related.length === 0 ? (
-            <p className="text-sm text-slate-400">No peers available in this category.</p>
-          ) : (
-            related.map((peer) => (
-              <Link key={peer.id} href={`/assets/${peer.id}`} className="rounded-2xl border border-white/10 bg-white/5 p-4 transition hover:border-cyan-300/25 hover:bg-cyan-300/8">
-                <p className="font-medium text-slate-50">{peer.name}</p>
-                <p className="mt-1 text-sm text-slate-400">{peer.symbol}</p>
-                <p className={`mt-3 text-sm font-semibold ${peer.change24h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatSignedPercent(peer.change24h)}</p>
-              </Link>
-            ))
-          )}
-        </div>
-      </section>
     </div>
   );
 }

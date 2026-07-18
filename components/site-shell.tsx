@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { HeaderUpdateStatus } from "@/components/header-update-status";
 import { getDataMode } from "@/lib/config";
 
 const navItems = [
@@ -12,36 +13,39 @@ const navItems = [
 export function SiteShell({ children }: { children: ReactNode }) {
   const dataMode = getDataMode();
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.12),_transparent_35%),radial-gradient(circle_at_top_right,_rgba(99,102,241,0.12),_transparent_30%),linear-gradient(180deg,_#020617_0%,_#040816_42%,_#030712_100%)] text-slate-50">
-      <div className="pointer-events-none absolute inset-0 opacity-50 [background-image:linear-gradient(rgba(148,163,184,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.06)_1px,transparent_1px)] [background-size:56px_56px]" />
-      <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
-        <header className="sonitus-panel flex flex-col gap-4 px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-lg font-semibold text-cyan-200 shadow-glow">
+    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.08),_transparent_32%),radial-gradient(circle_at_top_right,_rgba(99,102,241,0.07),_transparent_28%),linear-gradient(180deg,_#020617_0%,_#050914_48%,_#030712_100%)] text-slate-50">
+      <div className="pointer-events-none absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(148,163,184,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.05)_1px,transparent_1px)] [background-size:64px_64px]" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[1720px] flex-col px-3 sm:px-5 lg:px-6">
+        <header className="flex flex-col gap-2 border-b border-white/[0.08] py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-400/20 bg-cyan-400/10 text-xs font-semibold text-cyan-200 shadow-glow">
               S
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-[0.45em] text-cyan-200/70">SONITUS</p>
-              <h1 className="text-lg font-semibold text-slate-50">Crypto signal lab</h1>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.38em] text-slate-100">SONITUS</p>
+              <h1 className="text-[9px] uppercase tracking-[0.2em] text-slate-500">Crypto signal lab</h1>
             </div>
           </div>
 
-          <nav className="flex flex-wrap gap-2">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-200 transition hover:border-cyan-300/30 hover:bg-cyan-300/10 hover:text-cyan-100"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <HeaderUpdateStatus />
+            <nav className="flex flex-wrap gap-1">
+              {navItems.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="rounded-md border border-transparent px-2.5 py-1.5 text-[10px] uppercase tracking-[0.12em] text-slate-400 transition hover:border-cyan-300/20 hover:bg-cyan-300/[0.07] hover:text-cyan-100"
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
         </header>
 
-        <main className="relative flex-1 py-6">{children}</main>
+        <main className="relative flex-1 py-3">{children}</main>
 
-        <footer className="pb-4 text-xs text-slate-500">
+        <footer className="border-t border-white/[0.06] py-3 text-[10px] text-slate-600">
           SONITUS market intelligence dashboard · {dataMode === "database" ? "CoinGecko snapshots persisted by the ingestion worker" : "Local demo data mode"} · Not investment advice.
         </footer>
       </div>

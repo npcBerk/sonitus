@@ -34,19 +34,7 @@ test("CoinGecko requests preserve the base URL path and validate a live snapshot
         name: "Ethereum",
         market_cap_rank: 2
       };
-      response.end(JSON.stringify(
-        url.searchParams.get("category") === "stablecoins"
-          ? [tether]
-          : url.searchParams.has("ids")
-            ? [ethereum]
-            : [tether, bitcoin]
-      ));
-    } else if (url.pathname === "/api/v3/coins/categories") {
-      response.end(JSON.stringify([{ id: "layer-1", name: "Layer 1", market_cap_change_24h: 3, updated_at: updatedAt }]));
-    } else if (url.pathname === "/api/v3/coins/bitcoin") {
-      response.end(JSON.stringify({ categories: ["Layer 1 (L1)"], image: { thumb: "", small: "", large: "" } }));
-    } else if (url.pathname === "/api/v3/coins/ethereum") {
-      response.end(JSON.stringify({ categories: ["Smart Contract Platform"], image: { thumb: "", small: "", large: "" } }));
+      response.end(JSON.stringify(url.searchParams.has("ids") ? [ethereum] : [tether, bitcoin]));
     } else {
       response.statusCode = 404;
       response.end("{}");
@@ -66,14 +54,13 @@ test("CoinGecko requests preserve the base URL path and validate a live snapshot
   process.env.MIN_VOLUME_USD = "0";
   try {
     const snapshot = await fetchLiveSnapshot([
-      { providerId: "ethereum", categoryId: "layer-1", categoryName: "Layer 1", imageUrl: "" },
-      { providerId: "missing-retained", categoryId: "layer-1", categoryName: "Layer 1", imageUrl: "" }
+      { providerId: "ethereum", imageUrl: "" },
+      { providerId: "missing-retained", imageUrl: "" }
     ], 1);
     assert.equal(snapshot.coins.find((coin) => coin.providerId === "bitcoin")?.isCandidate, true);
     assert.equal(snapshot.coins.find((coin) => coin.providerId === "ethereum")?.isCandidate, false);
     assert.equal(snapshot.coins.some((coin) => coin.providerId === "tether"), false);
     assert.deepEqual(snapshot.staleRetainedProviderIds, ["missing-retained"]);
-    assert.equal(snapshot.categories[0].providerId, "layer-1");
     assert.ok(requestedPaths.every((path) => path.startsWith("/api/v3/")));
     assert.ok(requestedQueries.some((query) => query.includes("order=volume_desc") && !query.includes("ids=")));
     assert.ok(requestedQueries.some((query) => query.includes("ids=ethereum%2Cmissing-retained")));

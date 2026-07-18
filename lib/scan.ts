@@ -1,6 +1,6 @@
 import { fetchLiveSnapshot, type LiveSnapshot } from "./coingecko";
 import { getDataMode, getRuntimeConfig } from "./config";
-import { buildCategories, runScanJob } from "./dashboard";
+import { runScanJob } from "./dashboard";
 import { ConfigurationError, ScanAlreadyRunningError } from "./errors";
 import { logger } from "./logger";
 import { getBaseAssets } from "./mock-data";
@@ -10,26 +10,14 @@ import { acquireMarketScanLock, releaseMarketScanLock } from "./redis";
 
 function buildMockLiveSnapshot(): LiveSnapshot {
   const assets = getBaseAssets();
-  const categories = buildCategories(assets);
-  const categoriesById = new Map(categories.map((category) => [category.id, category.name]));
   return {
     source: "coingecko",
     updatedAt: new Date().toISOString(),
-    categories: categories.map((category) => ({
-      providerId: category.id,
-      name: category.name,
-      marketCapChange24h: category.marketCapChange24h,
-      assetCount: category.assetCount,
-      updatedAt: category.updatedAt
-    })),
     coins: assets.slice(0, getRuntimeConfig().scanLimit).map((asset) => ({
       providerId: asset.providerId,
       symbol: asset.symbol,
       name: asset.name,
       imageUrl: "",
-      categoryId: asset.categoryId,
-      categoryName: categoriesById.get(asset.categoryId) ?? asset.categoryId,
-      isStablecoin: false,
       isCandidate: true,
       rank: asset.rank,
       lastPrice: asset.lastPrice,
@@ -63,8 +51,7 @@ export async function runMarketSnapshotOnce() {
             where: { isActive: true, trackedUntil: { gte: new Date() } },
             select: {
               providerId: true,
-              imageUrl: true,
-              category: { select: { providerId: true, name: true } }
+              imageUrl: true
             }
           })
         : [];
@@ -74,8 +61,6 @@ export async function runMarketSnapshotOnce() {
         : await fetchLiveSnapshot(
             trackedAssets.map((asset) => ({
               providerId: asset.providerId,
-              categoryId: asset.category.providerId,
-              categoryName: asset.category.name,
               imageUrl: asset.imageUrl ?? ""
             }))
           );
