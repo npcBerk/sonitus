@@ -8,8 +8,12 @@ declare global {
 }
 
 export function getPrismaClient() {
+  // Mock mode must never initialize Prisma, even when DATABASE_URL is present
+  // in the environment (for example when switching between local and hosted
+  // configurations).
+  if (getDataMode() === "mock") return null;
+
   if (!process.env.DATABASE_URL) {
-    if (getDataMode() === "mock") return null;
     throw new ConfigurationError("DATABASE_URL is required when SONITUS_DATA_MODE=database.");
   }
 
