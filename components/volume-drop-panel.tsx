@@ -24,7 +24,9 @@ export function VolumeDropPanel({ assets }: VolumeDropPanelProps) {
                   <p className="text-sm text-slate-400">{asset.symbol}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm font-semibold text-amber-200">{formatSignedPercent(asset.volumeDelta24h)}</p>
+                  <p className="text-sm font-semibold text-amber-200">
+                    {asset.volumeDelta24h === null ? "—" : formatSignedPercent(asset.volumeDelta24h)}
+                  </p>
                   <p className="text-xs text-slate-500">24h volume delta</p>
                 </div>
               </div>

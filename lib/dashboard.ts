@@ -6,17 +6,19 @@ import type {
 import { z } from "zod";
 
 import { DataUnavailableError } from "./errors";
+import { getRuntimeConfig } from "./config";
 import { baseScanJob, categorySeedData, getBaseAssets } from "./mock-data";
 import { getPrismaClient } from "./prisma";
 import { readDashboardCache } from "./redis";
+import { isStablecoinCategory, isStablecoinIdentity } from "./stablecoins";
 import type { Asset, Category, DashboardFilters, DashboardPayload, ScanJob } from "./types";
 
-const sortSchema = z.enum(["volume", "volMcap", "change24h", "volatility", "marketCap", "volumeDelta", "name"]);
+const sortSchema = z.enum(["signal", "volume", "volMcap", "change24h", "volatility", "marketCap", "volumeDelta", "name"]);
 
 export const dashboardFiltersSchema = z.object({
   query: z.string().trim().max(100).default(""),
   category: z.string().trim().min(1).max(100).default("all"),
-  sort: sortSchema.default("volume"),
+  sort: sortSchema.default("signal"),
   minMarketCap: z.coerce.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0),
   minVolume: z.coerce.number().finite().nonnegative().max(Number.MAX_SAFE_INTEGER).default(0)
 });
@@ -35,7 +37,14 @@ export const assetSchema: z.ZodType<Asset> = z.object({
   currentVolume: z.number().finite().nonnegative(),
   change1h: z.number().finite(),
   change24h: z.number().finite(),
-  volumeDelta24h: z.number().finite(),
+  baselineVolume: z.number().finite().nonnegative().nullable(),
+  baselineCapturedAt: isoDateSchema.nullable(),
+  volumeDelta24h: z.number().finite().nullable(),
+  absoluteVolumeDelta: z.number().finite().nullable(),
+  volumeSignalScore: z.number().finite().nonnegative().nullable(),
+  baselineStatus: z.enum(["warming_up", "ready", "missing", "stale"]),
+  candidateLastSeenAt: isoDateSchema.nullable(),
+  trackedUntil: isoDateSchema.nullable(),
   sparkline: z.array(z.number().finite()),
   updatedAt: isoDateSchema
 });
@@ -68,11 +77,14 @@ export const dashboardPayloadSchema: z.ZodType<DashboardPayload> = z.object({
     totalVolume: z.number().finite().nonnegative(),
     averageChange24h: z.number().finite(),
     averageVolMcap: z.number().finite().nonnegative(),
-    leadingCategory: z.string()
+    leadingCategory: z.string(),
+    readyAssets: z.number().int().nonnegative(),
+    baselineReadyPercent: z.number().finite().nonnegative()
   }),
   coins: z.array(assetSchema),
   categories: z.array(categorySchema),
   topVolumeAsset: assetSchema.nullable(),
+  risingVolume: z.array(assetSchema),
   highVolMcap: z.array(assetSchema),
   volatileAssets: z.array(assetSchema),
   fallingVolume: z.array(assetSchema),
@@ -87,7 +99,7 @@ type AssetWithSignals = Asset & {
 export const defaultDashboardFilters: DashboardFilters = {
   query: "",
   category: "all",
-  sort: "volume",
+  sort: "signal",
   minMarketCap: 0,
   minVolume: 0
 };
@@ -97,7 +109,7 @@ function safeRatio(numerator: number, denominator: number) {
 }
 
 function volatilityScore(asset: Asset) {
-  return Number((Math.abs(asset.change1h) * 1.35 + Math.abs(asset.change24h) * 0.95 + Math.abs(asset.volumeDelta24h) * 0.18).toFixed(2));
+  return Number((Math.abs(asset.change1h) * 2 + Math.abs(asset.change24h)).toFixed(2));
 }
 
 function enrichAssets(assets: Asset[]): AssetWithSignals[] {
@@ -121,21 +133,51 @@ function stripSignals(asset: AssetWithSignals): Asset {
     currentVolume: asset.currentVolume,
     change1h: asset.change1h,
     change24h: asset.change24h,
+    baselineVolume: asset.baselineVolume,
+    baselineCapturedAt: asset.baselineCapturedAt,
     volumeDelta24h: asset.volumeDelta24h,
+    absoluteVolumeDelta: asset.absoluteVolumeDelta,
+    volumeSignalScore: asset.volumeSignalScore,
+    baselineStatus: asset.baselineStatus,
+    candidateLastSeenAt: asset.candidateLastSeenAt,
+    trackedUntil: asset.trackedUntil,
     sparkline: asset.sparkline,
     updatedAt: asset.updatedAt
   };
 }
 
-function stablecoinCategoryIds(categories: Category[]) {
-  const ids = new Set<string>();
+function excludeStablecoins(assets: Asset[], categories: Category[]) {
+  const categoriesById = new Map<string, Category>();
   for (const category of categories) {
-    const identity = `${category.providerId} ${category.name}`.toLocaleLowerCase("en-US");
-    if (!/\bstable[\s-]?coins?\b/.test(identity)) continue;
-    ids.add(category.id);
-    ids.add(category.providerId);
+    categoriesById.set(category.id, category);
+    categoriesById.set(category.providerId, category);
   }
-  return ids;
+
+  const cleanAssets = assets.filter((asset) => {
+    const category = categoriesById.get(asset.categoryId);
+    return !isStablecoinIdentity({
+      providerId: asset.providerId,
+      categoryId: category?.providerId ?? asset.categoryId,
+      categoryName: category?.name
+    });
+  });
+  const categoryCounts = new Map<string, number>();
+  for (const asset of cleanAssets) {
+    categoryCounts.set(asset.categoryId, (categoryCounts.get(asset.categoryId) ?? 0) + 1);
+  }
+  const cleanCategories = categories
+    .filter((category) => !isStablecoinCategory(category.providerId) && !isStablecoinCategory(category.name))
+    .map((category) => ({ ...category, assetCount: categoryCounts.get(category.id) ?? 0 }));
+
+  return { assets: cleanAssets, categories: cleanCategories };
+}
+
+function isLiquidityEligible(asset: Asset) {
+  const config = getRuntimeConfig();
+  return (
+    asset.currentMarketCap >= config.minMarketCapUsd &&
+    Math.max(asset.currentVolume, asset.baselineVolume ?? 0) >= config.minVolumeUsd
+  );
 }
 
 export function buildCategories(assets: Asset[]): Category[] {
@@ -168,7 +210,7 @@ function rawFilterValues(searchParams: Record<string, string | string[] | undefi
   return {
     query: first(searchParams.query) ?? "",
     category: first(searchParams.category) ?? "all",
-    sort: first(searchParams.sort) ?? "volume",
+    sort: first(searchParams.sort) ?? "signal",
     minMarketCap: first(searchParams.minMarketCap) ?? "0",
     minVolume: first(searchParams.minVolume) ?? "0"
   };
@@ -206,7 +248,9 @@ export function filterAssets(assets: Asset[], filters: DashboardFilters) {
         case "marketCap":
           return b.currentMarketCap - a.currentMarketCap;
         case "volumeDelta":
-          return b.volumeDelta24h - a.volumeDelta24h;
+          return (b.volumeDelta24h ?? -Number.MAX_VALUE) - (a.volumeDelta24h ?? -Number.MAX_VALUE);
+        case "signal":
+          return (b.volumeSignalScore ?? -Number.MAX_VALUE) - (a.volumeSignalScore ?? -Number.MAX_VALUE);
         case "name":
           return a.name.localeCompare(b.name);
         case "volume":
@@ -223,18 +267,28 @@ export function createDashboardPayload(
   updatedAt: string,
   filters: DashboardFilters = defaultDashboardFilters
 ): DashboardPayload {
+  const clean = excludeStablecoins(assets, categories);
+  assets = clean.assets.filter(isLiquidityEligible);
+  const eligibleCategoryCounts = new Map<string, number>();
+  for (const asset of assets) {
+    eligibleCategoryCounts.set(asset.categoryId, (eligibleCategoryCounts.get(asset.categoryId) ?? 0) + 1);
+  }
+  categories = clean.categories.map((category) => ({
+    ...category,
+    assetCount: eligibleCategoryCounts.get(category.id) ?? 0
+  }));
   const resolvedCategoryId =
     filters.category === "all"
       ? "all"
       : categories.find((category) => category.id === filters.category || category.providerId === filters.category)?.id ?? filters.category;
   const filteredAssets = filterAssets(assets, { ...filters, category: resolvedCategoryId });
   const enriched = enrichAssets(filteredAssets);
-  const stablecoinIds = stablecoinCategoryIds(categories);
-  const signalAssets = enriched.filter((asset) => !stablecoinIds.has(asset.categoryId));
   const totalMarketCap = enriched.reduce((sum, asset) => sum + asset.currentMarketCap, 0);
   const totalVolume = enriched.reduce((sum, asset) => sum + asset.currentVolume, 0);
   const averageChange24h = enriched.length === 0 ? 0 : enriched.reduce((sum, asset) => sum + asset.change24h, 0) / enriched.length;
   const averageVolMcap = enriched.length === 0 ? 0 : enriched.reduce((sum, asset) => sum + asset.volMcapRatio, 0) / enriched.length;
+  const readyAssets = enriched.filter((asset) => asset.baselineStatus === "ready").length;
+  const baselineReadyPercent = enriched.length === 0 ? 0 : Number(((readyAssets / enriched.length) * 100).toFixed(2));
   const activeCategories = categories.filter((category) => category.assetCount > 0);
   const leadingCategory = activeCategories.slice().sort((a, b) => b.marketCapChange24h - a.marketCapChange24h)[0]?.name ?? "Unknown";
 
@@ -247,26 +301,33 @@ export function createDashboardPayload(
       totalVolume,
       averageChange24h,
       averageVolMcap,
-      leadingCategory
+      leadingCategory,
+      readyAssets,
+      baselineReadyPercent
     },
     coins: filteredAssets,
     categories,
     topVolumeAsset:
-      signalAssets
+      enriched
         .slice()
         .sort((a, b) => b.currentVolume - a.currentVolume)
         .map(stripSignals)[0] ?? null,
-    highVolMcap: signalAssets
-      .slice()
+    risingVolume: enriched
+      .filter((asset) => asset.baselineStatus === "ready" && (asset.volumeDelta24h ?? 0) > 0)
+      .sort((a, b) => (b.volumeSignalScore ?? 0) - (a.volumeSignalScore ?? 0))
+      .slice(0, 15)
+      .map(stripSignals),
+    highVolMcap: enriched
+      .filter((asset) => asset.baselineStatus === "ready" && (asset.volumeDelta24h ?? 0) > 0)
       .sort((a, b) => b.volMcapRatio - a.volMcapRatio)
       .filter((asset) => asset.volMcapRatio >= 0.03)
-      .slice(0, 6)
+      .slice(0, 15)
       .map(stripSignals),
-    volatileAssets: signalAssets.slice().sort((a, b) => b.volatilityScore - a.volatilityScore).slice(0, 6).map(stripSignals),
-    fallingVolume: signalAssets
-      .filter((asset) => asset.volumeDelta24h < 0)
-      .sort((a, b) => a.volumeDelta24h - b.volumeDelta24h)
-      .slice(0, 6)
+    volatileAssets: enriched.slice().sort((a, b) => b.volatilityScore - a.volatilityScore).slice(0, 15).map(stripSignals),
+    fallingVolume: enriched
+      .filter((asset) => asset.baselineStatus === "ready" && (asset.volumeDelta24h ?? 0) < 0)
+      .sort((a, b) => (b.volumeSignalScore ?? 0) - (a.volumeSignalScore ?? 0))
+      .slice(0, 15)
       .map(stripSignals),
     latestScan
   });
@@ -306,7 +367,13 @@ type AssetRecordWithMetric = PrismaAssetRecord & {
   metrics?: Array<{
     change1h: number;
     change24h: number;
-    volumeDelta24h: number;
+    baselineVolume: number | null;
+    baselineCapturedAt: Date | null;
+    volumeDelta24h: number | null;
+    absoluteVolumeDelta: number | null;
+    volumeSignalScore: number | null;
+    baselineStatus: "warming_up" | "ready" | "missing" | "stale";
+    providerUpdatedAt: Date;
     capturedAt: Date;
   }>;
 };
@@ -325,9 +392,16 @@ export function mapAssetRecord(asset: AssetRecordWithMetric): Asset {
     currentVolume: asset.currentVolume,
     change1h: latestMetric?.change1h ?? 0,
     change24h: latestMetric?.change24h ?? 0,
-    volumeDelta24h: latestMetric?.volumeDelta24h ?? 0,
+    baselineVolume: latestMetric?.baselineVolume ?? null,
+    baselineCapturedAt: latestMetric?.baselineCapturedAt?.toISOString() ?? null,
+    volumeDelta24h: latestMetric?.volumeDelta24h ?? null,
+    absoluteVolumeDelta: latestMetric?.absoluteVolumeDelta ?? null,
+    volumeSignalScore: latestMetric?.volumeSignalScore ?? null,
+    baselineStatus: latestMetric?.baselineStatus ?? "warming_up",
+    candidateLastSeenAt: asset.candidateLastSeenAt?.toISOString() ?? null,
+    trackedUntil: asset.trackedUntil?.toISOString() ?? null,
     sparkline: Array.isArray(asset.sparkline) ? asset.sparkline : [],
-    updatedAt: (latestMetric?.capturedAt ?? asset.updatedAt).toISOString()
+    updatedAt: (latestMetric?.providerUpdatedAt ?? asset.updatedAt).toISOString()
   };
 }
 
@@ -358,7 +432,7 @@ function isDefaultFilters(filters: DashboardFilters) {
   return (
     filters.query === "" &&
     filters.category === "all" &&
-    filters.sort === "volume" &&
+    filters.sort === "signal" &&
     filters.minMarketCap === 0 &&
     filters.minVolume === 0
   );
@@ -372,7 +446,14 @@ async function readCachedDashboardPayload() {
   if (redisPayload) {
     try {
       const parsed = dashboardPayloadSchema.safeParse(JSON.parse(redisPayload));
-      if (parsed.success) return parsed.data;
+      if (parsed.success) {
+        return createDashboardPayload(
+          parsed.data.coins,
+          parsed.data.categories,
+          parsed.data.latestScan,
+          parsed.data.updatedAt
+        );
+      }
     } catch {
       // A malformed hot-cache entry is ignored in favor of the durable database snapshot.
     }
@@ -380,7 +461,9 @@ async function readCachedDashboardPayload() {
 
   const snapshot = await prisma.cacheSnapshot.findUnique({ where: { snapshotType: "dashboard" } });
   const parsed = snapshot ? dashboardPayloadSchema.safeParse(snapshot.payload) : null;
-  return parsed?.success ? parsed.data : null;
+  return parsed?.success
+    ? createDashboardPayload(parsed.data.coins, parsed.data.categories, parsed.data.latestScan, parsed.data.updatedAt)
+    : null;
 }
 
 export async function loadDashboardPayload(filters: DashboardFilters = defaultDashboardFilters): Promise<DashboardPayload> {
@@ -394,7 +477,7 @@ export async function loadDashboardPayload(filters: DashboardFilters = defaultDa
 
   const [assetRecords, categoryRecords, latestScan] = await Promise.all([
     prisma.asset.findMany({
-      where: { isActive: true },
+      where: { isActive: true, trackedUntil: { gte: new Date() } },
       orderBy: { rank: "asc" },
       include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
     }),
@@ -419,10 +502,24 @@ export async function loadAssetById(id: string): Promise<Asset | null> {
   if (!prisma) return getAssetById(id);
 
   const record = await prisma.asset.findFirst({
-    where: { isActive: true, OR: [{ id }, { providerId: id }, { symbol: id.toUpperCase() }] },
-    include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
+    where: {
+      isActive: true,
+      trackedUntil: { gte: new Date() },
+      OR: [{ id }, { providerId: id }, { symbol: id.toUpperCase() }]
+    },
+    include: { category: true, metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
   });
-  return record ? mapAssetRecord(record) : null;
+  if (
+    !record ||
+    isStablecoinIdentity({
+      providerId: record.providerId,
+      categoryId: record.category.providerId,
+      categoryName: record.category.name
+    })
+  ) {
+    return null;
+  }
+  return mapAssetRecord(record);
 }
 
 export async function loadCategoryById(id: string): Promise<Category | null> {
@@ -430,8 +527,15 @@ export async function loadCategoryById(id: string): Promise<Category | null> {
   if (!prisma) return getCategoryById(id);
 
   const record = await prisma.category.findFirst({ where: { OR: [{ id }, { providerId: id }] } });
-  if (!record) return null;
-  const assetCount = await prisma.asset.count({ where: { categoryId: record.id, isActive: true } });
+  if (!record || isStablecoinCategory(record.providerId) || isStablecoinCategory(record.name)) return null;
+  const assetRecords = await prisma.asset.findMany({
+    where: { categoryId: record.id, isActive: true, trackedUntil: { gte: new Date() } },
+    include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
+  });
+  const assetCount = assetRecords
+    .filter((asset) => !isStablecoinIdentity({ providerId: asset.providerId }))
+    .map(mapAssetRecord)
+    .filter(isLiquidityEligible).length;
   return mapCategoryRecord(record, assetCount);
 }
 
@@ -440,11 +544,14 @@ export async function loadAssetsByCategory(categoryId: string): Promise<Asset[]>
   if (!prisma) return getAssetsByCategory(categoryId);
 
   const category = await prisma.category.findFirst({ where: { OR: [{ id: categoryId }, { providerId: categoryId }] } });
-  if (!category) return [];
+  if (!category || isStablecoinCategory(category.providerId) || isStablecoinCategory(category.name)) return [];
   const records = await prisma.asset.findMany({
-    where: { categoryId: category.id, isActive: true },
+    where: { categoryId: category.id, isActive: true, trackedUntil: { gte: new Date() } },
     orderBy: { rank: "asc" },
     include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
   });
-  return records.map(mapAssetRecord);
+  return records
+    .filter((record) => !isStablecoinIdentity({ providerId: record.providerId }))
+    .map(mapAssetRecord)
+    .filter(isLiquidityEligible);
 }

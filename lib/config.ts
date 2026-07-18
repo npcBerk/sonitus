@@ -5,6 +5,9 @@ import { ConfigurationError } from "./errors";
 const positiveInteger = (fallback: number) =>
   z.coerce.number().int().positive().catch(fallback);
 
+const nonnegativeNumber = (fallback: number) =>
+  z.coerce.number().finite().nonnegative().catch(fallback);
+
 export type DataMode = "database" | "mock";
 
 export function getDataMode(): DataMode {
@@ -25,7 +28,10 @@ export function getRuntimeConfig() {
   return {
     dataMode: getDataMode(),
     scanIntervalMinutes: positiveInteger(5).parse(process.env.SCAN_INTERVAL_MINUTES),
-    scanLimit: positiveInteger(50).parse(process.env.COINGECKO_SCAN_LIMIT),
+    scanLimit: z.coerce.number().int().min(1).max(250).catch(250).parse(process.env.COINGECKO_SCAN_LIMIT),
+    candidateRetentionHours: positiveInteger(48).parse(process.env.CANDIDATE_RETENTION_HOURS),
+    minMarketCapUsd: nonnegativeNumber(25_000_000).parse(process.env.MIN_MARKET_CAP_USD),
+    minVolumeUsd: nonnegativeNumber(5_000_000).parse(process.env.MIN_VOLUME_USD),
     providerConcurrency: positiveInteger(4).parse(process.env.COINGECKO_CONCURRENCY),
     providerTimeoutMs: positiveInteger(10_000).parse(process.env.COINGECKO_TIMEOUT_MS),
     providerMaxRetries: z.coerce.number().int().min(0).max(6).catch(3).parse(process.env.COINGECKO_MAX_RETRIES),

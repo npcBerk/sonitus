@@ -14,6 +14,13 @@ enum JobStatus {
   failed
 }
 
+enum VolumeBaselineStatus {
+  warming_up
+  ready
+  missing
+  stale
+}
+
 model Category {
   id                  String  @id @default(cuid())
   providerId          String  @unique @map("provider_id")
@@ -39,6 +46,8 @@ model Asset {
   currentVolume    Float        @default(0) @map("current_volume")
   lastPrice        Float        @default(0) @map("last_price")
   isActive         Boolean      @default(true) @map("is_active")
+  candidateLastSeenAt DateTime? @map("candidate_last_seen_at")
+  trackedUntil     DateTime?     @map("tracked_until")
   sparkline        Float[]
   createdAt        DateTime     @default(now()) @map("created_at")
   updatedAt        DateTime     @updatedAt @map("updated_at")
@@ -47,6 +56,7 @@ model Asset {
   @@index([symbol])
   @@index([rank])
   @@index([isActive, rank])
+  @@index([isActive, trackedUntil])
   @@map("assets")
 }
 
@@ -60,7 +70,13 @@ model AssetMetric {
   volume24h       Float    @map("volume_24h")
   change1h        Float    @map("change_1h")
   change24h       Float    @map("change_24h")
-  volumeDelta24h  Float    @map("volume_delta_24h")
+  baselineVolume  Float?   @map("baseline_volume")
+  baselineCapturedAt DateTime? @map("baseline_captured_at")
+  volumeDelta24h  Float?   @map("volume_delta_24h")
+  absoluteVolumeDelta Float? @map("absolute_volume_delta")
+  volumeSignalScore Float? @map("volume_signal_score")
+  baselineStatus  VolumeBaselineStatus @default(warming_up) @map("baseline_status")
+  providerUpdatedAt DateTime @map("provider_updated_at")
   createdAt        DateTime @default(now()) @map("created_at")
 
   @@index([assetId, capturedAt])

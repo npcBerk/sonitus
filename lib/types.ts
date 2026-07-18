@@ -1,3 +1,5 @@
+export type VolumeBaselineStatus = "warming_up" | "ready" | "missing" | "stale";
+
 export type Asset = {
   id: string;
   providerId: string;
@@ -10,7 +12,14 @@ export type Asset = {
   currentVolume: number;
   change1h: number;
   change24h: number;
-  volumeDelta24h: number;
+  baselineVolume: number | null;
+  baselineCapturedAt: string | null;
+  volumeDelta24h: number | null;
+  absoluteVolumeDelta: number | null;
+  volumeSignalScore: number | null;
+  baselineStatus: VolumeBaselineStatus;
+  candidateLastSeenAt: string | null;
+  trackedUntil: string | null;
   sparkline: number[];
   updatedAt: string;
 };
@@ -41,6 +50,8 @@ export type DashboardSummary = {
   averageChange24h: number;
   averageVolMcap: number;
   leadingCategory: string;
+  readyAssets: number;
+  baselineReadyPercent: number;
 };
 
 export type DashboardPayload = {
@@ -50,6 +61,7 @@ export type DashboardPayload = {
   coins: Asset[];
   categories: Category[];
   topVolumeAsset: Asset | null;
+  risingVolume: Asset[];
   highVolMcap: Asset[];
   volatileAssets: Asset[];
   fallingVolume: Asset[];
@@ -59,7 +71,7 @@ export type DashboardPayload = {
 export type DashboardFilters = {
   query: string;
   category: string;
-  sort: "volume" | "volMcap" | "change24h" | "volatility" | "marketCap" | "volumeDelta" | "name";
+  sort: "signal" | "volume" | "volMcap" | "change24h" | "volatility" | "marketCap" | "volumeDelta" | "name";
   minMarketCap: number;
   minVolume: number;
 };

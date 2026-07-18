@@ -17,12 +17,21 @@ export function getRedisClient() {
   const redisUrl = process.env.REDIS_URL?.trim();
   if (!redisUrl) return null;
 
+  // ioredis keeps reconnecting forever by default. That is especially noisy
+  // for readiness checks: one request against an unavailable Redis instance
+  // would leave a background reconnect loop running after the response.
+  // Discard a closed client so a later request can make a fresh attempt.
+  if (globalThis.__sonitusRedis?.status === "end") {
+    globalThis.__sonitusRedis = undefined;
+  }
+
   if (!globalThis.__sonitusRedis) {
     const client = new IORedis(redisUrl, {
       connectTimeout: 2_000,
       enableOfflineQueue: false,
       lazyConnect: true,
-      maxRetriesPerRequest: 1
+      maxRetriesPerRequest: 1,
+      retryStrategy: () => null
     });
     client.on("error", (error) => logger.warn({ err: error }, "Redis client error"));
     globalThis.__sonitusRedis = client;

@@ -37,7 +37,14 @@ const asset: Asset = {
   currentVolume: 100,
   change1h: 1,
   change24h: 2,
+  baselineVolume: 110,
+  baselineCapturedAt: now,
   volumeDelta24h: -3,
+  absoluteVolumeDelta: -10,
+  volumeSignalScore: 12,
+  baselineStatus: "ready",
+  candidateLastSeenAt: now,
+  trackedUntil: now,
   sparkline: [1, 2],
   updatedAt: now
 };
@@ -48,7 +55,7 @@ test("invalid public filters are rejected while pages fall back safely", () => {
   assert.deepEqual(parseDashboardFilters(raw), {
     query: "",
     category: "all",
-    sort: "volume",
+    sort: "signal",
     minMarketCap: 0,
     minVolume: 0
   });
@@ -72,11 +79,11 @@ test("assets can be ranked by Volume / Market Cap signal", () => {
   assert.equal(ranked[0].id, highTurnover.id);
 });
 
-test("runtime config scans 50 assets by default and supports an override", () => {
+test("runtime config scans 250 volume-ranked assets by default and supports an override", () => {
   const previous = process.env.COINGECKO_SCAN_LIMIT;
   try {
     delete process.env.COINGECKO_SCAN_LIMIT;
-    assert.equal(getRuntimeConfig().scanLimit, 50);
+    assert.equal(getRuntimeConfig().scanLimit, 250);
     process.env.COINGECKO_SCAN_LIMIT = "75";
     assert.equal(getRuntimeConfig().scanLimit, 75);
   } finally {
@@ -85,7 +92,7 @@ test("runtime config scans 50 assets by default and supports an override", () =>
   }
 });
 
-test("stablecoins remain in market totals but are excluded from opportunity signals", () => {
+test("stablecoins are excluded from every dashboard surface and market total", () => {
   const stablecoinCategory: Category = {
     ...category,
     id: "category-stablecoins",
@@ -100,15 +107,21 @@ test("stablecoins remain in market totals but are excluded from opportunity sign
     symbol: "USDT",
     name: "Tether",
     categoryId: stablecoinCategory.id,
-    currentMarketCap: 1_000,
-    currentVolume: 900,
-    volumeDelta24h: -50
+    currentMarketCap: 100_000_000,
+    currentVolume: 90_000_000,
+    baselineVolume: 180_000_000,
+    volumeDelta24h: -50,
+    absoluteVolumeDelta: -90_000_000,
+    volumeSignalScore: 300
   };
   const bitcoin: Asset = {
     ...asset,
-    currentMarketCap: 10_000,
-    currentVolume: 500,
-    volumeDelta24h: -10
+    currentMarketCap: 1_000_000_000,
+    currentVolume: 50_000_000,
+    baselineVolume: 55_000_000,
+    volumeDelta24h: -10,
+    absoluteVolumeDelta: -5_000_000,
+    volumeSignalScore: 50
   };
 
   const payload = createDashboardPayload(
@@ -119,13 +132,80 @@ test("stablecoins remain in market totals but are excluded from opportunity sign
     { query: "", category: "all", sort: "name", minMarketCap: 0, minVolume: 0 }
   );
 
-  assert.equal(payload.coins.length, 2);
-  assert.equal(payload.summary.totalAssets, 2);
-  assert.equal(payload.summary.totalVolume, 1_400);
+  assert.equal(payload.coins.length, 1);
+  assert.equal(payload.summary.totalAssets, 1);
+  assert.equal(payload.summary.totalVolume, 50_000_000);
+  assert.equal(payload.categories.some((item) => item.id === stablecoinCategory.id), false);
   assert.equal(payload.topVolumeAsset?.id, bitcoin.id);
   assert.equal(payload.highVolMcap.some((item) => item.id === stablecoin.id), false);
   assert.equal(payload.volatileAssets.some((item) => item.id === stablecoin.id), false);
   assert.equal(payload.fallingVolume.some((item) => item.id === stablecoin.id), false);
+});
+
+test("rising and falling panels are mutually exclusive, ready-only, and score-ranked", () => {
+  const readyBase: Asset = {
+    ...asset,
+    currentMarketCap: 100_000_000,
+    currentVolume: 20_000_000,
+    baselineVolume: 10_000_000,
+    absoluteVolumeDelta: 10_000_000,
+    volumeDelta24h: 100,
+    volumeSignalScore: 100,
+    baselineStatus: "ready"
+  };
+  const strongerRise = { ...readyBase, id: "rise-strong", providerId: "rise-strong", volumeSignalScore: 200 };
+  const weakerRise = { ...readyBase, id: "rise-weak", providerId: "rise-weak", volumeSignalScore: 50 };
+  const falling = {
+    ...readyBase,
+    id: "fall",
+    providerId: "fall",
+    currentVolume: 10_000_000,
+    baselineVolume: 20_000_000,
+    absoluteVolumeDelta: -10_000_000,
+    volumeDelta24h: -50,
+    volumeSignalScore: 150
+  };
+  const warming = {
+    ...strongerRise,
+    id: "warming",
+    providerId: "warming",
+    baselineStatus: "warming_up" as const,
+    baselineVolume: null,
+    baselineCapturedAt: null,
+    volumeDelta24h: null,
+    absoluteVolumeDelta: null,
+    volumeSignalScore: null
+  };
+
+  const payload = createDashboardPayload(
+    [weakerRise, falling, warming, strongerRise],
+    [category],
+    scan,
+    now
+  );
+
+  assert.deepEqual(payload.risingVolume.map((item) => item.id), ["rise-strong", "rise-weak"]);
+  assert.deepEqual(payload.fallingVolume.map((item) => item.id), ["fall"]);
+  assert.equal(payload.risingVolume.some((item) => payload.fallingVolume.some((other) => other.id === item.id)), false);
+  assert.equal(payload.risingVolume.some((item) => item.id === warming.id), false);
+  assert.equal(payload.summary.readyAssets, 3);
+  assert.equal(payload.summary.baselineReadyPercent, 75);
+});
+
+test("liquidity policy accepts baseline-supported contractions and rejects low market cap or volume", () => {
+  const baselineSupported = {
+    ...asset,
+    id: "baseline-supported",
+    providerId: "baseline-supported",
+    currentMarketCap: 30_000_000,
+    currentVolume: 1_000_000,
+    baselineVolume: 10_000_000
+  };
+  const lowMarketCap = { ...baselineSupported, id: "low-mcap", providerId: "low-mcap", currentMarketCap: 20_000_000 };
+  const lowVolume = { ...baselineSupported, id: "low-volume", providerId: "low-volume", currentVolume: 1_000_000, baselineVolume: 2_000_000 };
+
+  const payload = createDashboardPayload([baselineSupported, lowMarketCap, lowVolume], [category], scan, now);
+  assert.deepEqual(payload.coins.map((item) => item.id), ["baseline-supported"]);
 });
 
 test("asset table initially exposes 25 results and can reveal the full filtered set", () => {
@@ -142,12 +222,13 @@ test("asset table initially exposes 25 results and can reveal the full filtered 
 });
 
 test("asset table columns can be sorted in both directions without mutating the source", () => {
-  const ethereum = { ...asset, id: "ethereum", name: "Ethereum", lastPrice: 2_000, currentMarketCap: 400, currentVolume: 100 };
-  const bitcoin = { ...asset, id: "bitcoin", name: "Bitcoin", lastPrice: 60_000, currentMarketCap: 1_000, currentVolume: 100 };
+  const ethereum = { ...asset, id: "ethereum", name: "Ethereum", lastPrice: 4_000, currentMarketCap: 400, currentVolume: 100, volumeSignalScore: 10 };
+  const bitcoin = { ...asset, id: "bitcoin", name: "Bitcoin", lastPrice: 100_000, currentMarketCap: 1_000, currentVolume: 100, volumeSignalScore: 20 };
   const source = [ethereum, bitcoin];
 
   assert.deepEqual(sortAssets(source, "name", "asc").map((item) => item.name), ["Bitcoin", "Ethereum"]);
   assert.deepEqual(sortAssets(source, "price", "desc").map((item) => item.name), ["Bitcoin", "Ethereum"]);
+  assert.deepEqual(sortAssets(source, "signal", "desc").map((item) => item.name), ["Bitcoin", "Ethereum"]);
   assert.deepEqual(sortAssets(source, "volMcap", "desc").map((item) => item.name), ["Ethereum", "Bitcoin"]);
   assert.deepEqual(source.map((item) => item.name), ["Ethereum", "Bitcoin"]);
 });

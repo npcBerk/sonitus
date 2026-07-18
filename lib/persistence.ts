@@ -4,11 +4,12 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 
 import type { LiveSnapshot } from "./coingecko";
 import { getRuntimeConfig } from "./config";
-import { buildCategories, createDashboardPayload, runScanJob } from "./dashboard";
+import { buildCategories, createDashboardPayload, mapAssetRecord, mapCategoryRecord, runScanJob } from "./dashboard";
 import { logger } from "./logger";
 import { baseScanJob, getBaseAssets } from "./mock-data";
 import { writeDashboardCache } from "./redis";
-import type { Asset, Category, ScanJob } from "./types";
+import { isStablecoinCategory, isStablecoinIdentity, KNOWN_STABLECOIN_PROVIDER_IDS } from "./stablecoins";
+import type { Asset, Category, ScanJob, VolumeBaselineStatus } from "./types";
 
 type SeedOptions = {
   clearExisting?: boolean;
@@ -24,8 +25,45 @@ function toJson(value: unknown): Prisma.InputJsonValue {
 }
 
 export function computeVolumeDeltaPercent(currentVolume: number, baselineVolume?: number | null) {
-  if (!baselineVolume || baselineVolume <= 0) return 0;
+  if (!baselineVolume || baselineVolume <= 0) return null;
   return Number((((currentVolume - baselineVolume) / baselineVolume) * 100).toFixed(2));
+}
+
+export function computeVolumeSignal(
+  currentVolume: number,
+  baselineVolume?: number | null
+) {
+  const volumeDelta24h = computeVolumeDeltaPercent(currentVolume, baselineVolume);
+  if (volumeDelta24h === null || !baselineVolume) {
+    return {
+      volumeDelta24h: null,
+      absoluteVolumeDelta: null,
+      volumeSignalScore: null
+    };
+  }
+  const absoluteVolumeDelta = currentVolume - baselineVolume;
+  const liquidityWeight = Math.log10(1 + Math.max(currentVolume, baselineVolume) / 1_000_000);
+  return {
+    volumeDelta24h,
+    absoluteVolumeDelta: Number(absoluteVolumeDelta.toFixed(2)),
+    volumeSignalScore: Number((Math.abs(volumeDelta24h) * liquidityWeight).toFixed(4))
+  };
+}
+
+export function resolveBaselineStatus(options: {
+  capturedAt: Date;
+  providerUpdatedAt: Date;
+  firstCapturedAt?: Date | null;
+  baselineCapturedAt?: Date | null;
+  toleranceMs: number;
+  staleAfterMs: number;
+}): VolumeBaselineStatus {
+  const { capturedAt, providerUpdatedAt, firstCapturedAt, baselineCapturedAt, toleranceMs, staleAfterMs } = options;
+  if (capturedAt.getTime() - providerUpdatedAt.getTime() > staleAfterMs) return "stale";
+  if (baselineCapturedAt) return "ready";
+  if (!firstCapturedAt) return "warming_up";
+  const baselineTarget = capturedAt.getTime() - 24 * 60 * 60_000;
+  return firstCapturedAt.getTime() > baselineTarget + toleranceMs ? "warming_up" : "missing";
 }
 
 function errorMessage(error: unknown) {
@@ -100,6 +138,8 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
         currentMarketCap: asset.currentMarketCap,
         currentVolume: asset.currentVolume,
         lastPrice: asset.lastPrice,
+        candidateLastSeenAt: new Date(asset.candidateLastSeenAt ?? asset.updatedAt),
+        trackedUntil: new Date(asset.trackedUntil ?? asset.updatedAt),
         sparkline: asset.sparkline
       },
       create: {
@@ -111,6 +151,8 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
         currentMarketCap: asset.currentMarketCap,
         currentVolume: asset.currentVolume,
         lastPrice: asset.lastPrice,
+        candidateLastSeenAt: new Date(asset.candidateLastSeenAt ?? asset.updatedAt),
+        trackedUntil: new Date(asset.trackedUntil ?? asset.updatedAt),
         sparkline: asset.sparkline
       }
     });
@@ -122,7 +164,13 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
         volume24h: asset.currentVolume,
         change1h: asset.change1h,
         change24h: asset.change24h,
-        volumeDelta24h: asset.volumeDelta24h
+        baselineVolume: asset.baselineVolume,
+        baselineCapturedAt: asset.baselineCapturedAt ? new Date(asset.baselineCapturedAt) : null,
+        volumeDelta24h: asset.volumeDelta24h,
+        absoluteVolumeDelta: asset.absoluteVolumeDelta,
+        volumeSignalScore: asset.volumeSignalScore,
+        baselineStatus: asset.baselineStatus,
+        providerUpdatedAt: new Date(asset.updatedAt)
       },
       create: {
         assetId: stored.id,
@@ -132,7 +180,13 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
         volume24h: asset.currentVolume,
         change1h: asset.change1h,
         change24h: asset.change24h,
-        volumeDelta24h: asset.volumeDelta24h
+        baselineVolume: asset.baselineVolume,
+        baselineCapturedAt: asset.baselineCapturedAt ? new Date(asset.baselineCapturedAt) : null,
+        volumeDelta24h: asset.volumeDelta24h,
+        absoluteVolumeDelta: asset.absoluteVolumeDelta,
+        volumeSignalScore: asset.volumeSignalScore,
+        baselineStatus: asset.baselineStatus,
+        providerUpdatedAt: new Date(asset.updatedAt)
       }
     });
     persistedAssets.push({ ...asset, id: stored.id, categoryId });
@@ -174,13 +228,27 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
 
 export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSnapshot, existingContext?: ScanContext) {
   if (snapshot.coins.length === 0) throw new Error("Refusing to persist an empty market snapshot");
+  const stablecoinProviderIds = snapshot.coins
+    .filter((coin) => isStablecoinIdentity(coin))
+    .map((coin) => coin.providerId);
+  const eligibleCoins = snapshot.coins.filter((coin) => !isStablecoinIdentity(coin));
+  if (eligibleCoins.length === 0) throw new Error("Refusing to persist a stablecoin-only market snapshot");
   const context = existingContext ?? (await startScanJob(prisma));
 
   try {
     const payload = await prisma.$transaction(
       async (tx) => {
-        const categorySourceByProvider = new Map(snapshot.categories.map((category) => [category.providerId, category]));
-        for (const coin of snapshot.coins) {
+        const config = getRuntimeConfig();
+        const capturedAt = context.startedAt;
+        const retentionUntil = new Date(capturedAt.getTime() + config.candidateRetentionHours * 60 * 60_000);
+        const toleranceMs = config.volumeBaselineToleranceMinutes * 60_000;
+        const staleAfterMs = config.scanStaleMinutes * 60_000;
+        const categorySourceByProvider = new Map(
+          snapshot.categories
+            .filter((category) => !isStablecoinCategory(category.providerId) && !isStablecoinCategory(category.name))
+            .map((category) => [category.providerId, category])
+        );
+        for (const coin of eligibleCoins) {
           if (!categorySourceByProvider.has(coin.categoryId)) {
             categorySourceByProvider.set(coin.categoryId, {
               providerId: coin.categoryId,
@@ -203,16 +271,25 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
           );
         }
         const categoryIdByProvider = new Map(storedCategories.map((category) => [category.providerId, category.id]));
-        const persistedAssets: Asset[] = [];
-        const toleranceMs = getRuntimeConfig().volumeBaselineToleranceMinutes * 60_000;
+        const storedAssets = [];
 
-        await tx.asset.updateMany({ data: { isActive: false } });
+        await tx.asset.updateMany({
+          where: { OR: [{ trackedUntil: { lt: capturedAt } }, { trackedUntil: null }] },
+          data: { isActive: false }
+        });
+        await tx.asset.deleteMany({
+          where: {
+            providerId: {
+              in: Array.from(new Set<string>([...KNOWN_STABLECOIN_PROVIDER_IDS, ...stablecoinProviderIds]))
+            }
+          }
+        });
 
-        for (const coin of snapshot.coins) {
+        for (const coin of eligibleCoins) {
           const categoryId = categoryIdByProvider.get(coin.categoryId);
           if (!categoryId) throw new Error(`Missing category for live asset ${coin.providerId}`);
-          const capturedAt = new Date(coin.updatedAt);
-          if (Number.isNaN(capturedAt.getTime())) throw new Error(`Invalid provider timestamp for ${coin.providerId}`);
+          const providerUpdatedAt = new Date(coin.updatedAt);
+          if (Number.isNaN(providerUpdatedAt.getTime())) throw new Error(`Invalid provider timestamp for ${coin.providerId}`);
 
           const stored = await tx.asset.upsert({
             where: { providerId: coin.providerId },
@@ -226,6 +303,8 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
               currentMarketCap: coin.currentMarketCap,
               currentVolume: coin.currentVolume,
               lastPrice: coin.lastPrice,
+              candidateLastSeenAt: coin.isCandidate ? capturedAt : undefined,
+              trackedUntil: coin.isCandidate ? retentionUntil : undefined,
               sparkline: coin.sparkline
             },
             create: {
@@ -239,26 +318,64 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
               currentMarketCap: coin.currentMarketCap,
               currentVolume: coin.currentVolume,
               lastPrice: coin.lastPrice,
+              candidateLastSeenAt: coin.isCandidate ? capturedAt : null,
+              trackedUntil: coin.isCandidate ? retentionUntil : capturedAt,
               sparkline: coin.sparkline
             }
           });
+          storedAssets.push({ stored, coin, providerUpdatedAt });
+        }
 
-          const baselineTarget = capturedAt.getTime() - 24 * 60 * 60_000;
-          const baselineCandidates = await tx.assetMetric.findMany({
-            where: {
-              assetId: stored.id,
-              capturedAt: {
-                gte: new Date(baselineTarget - toleranceMs),
-                lte: new Date(baselineTarget + toleranceMs)
-              }
-            },
-            select: { capturedAt: true, volume24h: true }
+        const storedAssetIds = storedAssets.map(({ stored }) => stored.id);
+        const baselineTarget = capturedAt.getTime() - 24 * 60 * 60_000;
+        const baselineCandidates = storedAssetIds.length
+          ? await tx.assetMetric.findMany({
+              where: {
+                assetId: { in: storedAssetIds },
+                capturedAt: {
+                  gte: new Date(baselineTarget - toleranceMs),
+                  lte: new Date(baselineTarget + toleranceMs)
+                }
+              },
+              select: { assetId: true, capturedAt: true, volume24h: true }
+            })
+          : [];
+        const baselineByAssetId = new Map<string, (typeof baselineCandidates)[number]>();
+        for (const candidate of baselineCandidates) {
+          const existing = baselineByAssetId.get(candidate.assetId);
+          if (
+            !existing ||
+            Math.abs(candidate.capturedAt.getTime() - baselineTarget) <
+              Math.abs(existing.capturedAt.getTime() - baselineTarget)
+          ) {
+            baselineByAssetId.set(candidate.assetId, candidate);
+          }
+        }
+        const firstMetrics = storedAssetIds.length
+          ? await tx.assetMetric.groupBy({
+              by: ["assetId"],
+              where: { assetId: { in: storedAssetIds } },
+              _min: { capturedAt: true }
+            })
+          : [];
+        const firstCapturedAtByAssetId = new Map(
+          firstMetrics.map((metric) => [metric.assetId, metric._min.capturedAt])
+        );
+
+        for (const { stored, coin, providerUpdatedAt } of storedAssets) {
+          const baseline = baselineByAssetId.get(stored.id);
+          const baselineStatus = resolveBaselineStatus({
+            capturedAt,
+            providerUpdatedAt,
+            firstCapturedAt: firstCapturedAtByAssetId.get(stored.id),
+            baselineCapturedAt: baseline?.capturedAt,
+            toleranceMs,
+            staleAfterMs
           });
-          const baseline = baselineCandidates.sort(
-            (a, b) => Math.abs(a.capturedAt.getTime() - baselineTarget) - Math.abs(b.capturedAt.getTime() - baselineTarget)
-          )[0];
-          const volumeDelta24h = computeVolumeDeltaPercent(coin.currentVolume, baseline?.volume24h);
-
+          const signals =
+            baselineStatus === "ready"
+              ? computeVolumeSignal(coin.currentVolume, baseline?.volume24h)
+              : computeVolumeSignal(coin.currentVolume, null);
           await tx.assetMetric.upsert({
             where: { assetId_capturedAt: { assetId: stored.id, capturedAt } },
             update: {
@@ -267,7 +384,11 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
               volume24h: coin.currentVolume,
               change1h: coin.change1h,
               change24h: coin.change24h,
-              volumeDelta24h
+              baselineVolume: baselineStatus === "ready" ? baseline?.volume24h : null,
+              baselineCapturedAt: baselineStatus === "ready" ? baseline?.capturedAt : null,
+              ...signals,
+              baselineStatus,
+              providerUpdatedAt
             },
             create: {
               assetId: stored.id,
@@ -277,38 +398,75 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
               volume24h: coin.currentVolume,
               change1h: coin.change1h,
               change24h: coin.change24h,
-              volumeDelta24h
+              baselineVolume: baselineStatus === "ready" ? baseline?.volume24h : null,
+              baselineCapturedAt: baselineStatus === "ready" ? baseline?.capturedAt : null,
+              ...signals,
+              baselineStatus,
+              providerUpdatedAt
             }
-          });
-
-          persistedAssets.push({
-            id: stored.id,
-            providerId: stored.providerId,
-            symbol: coin.symbol,
-            name: coin.name,
-            categoryId,
-            rank: coin.rank,
-            lastPrice: coin.lastPrice,
-            currentMarketCap: coin.currentMarketCap,
-            currentVolume: coin.currentVolume,
-            change1h: coin.change1h,
-            change24h: coin.change24h,
-            volumeDelta24h,
-            sparkline: coin.sparkline,
-            updatedAt: capturedAt.toISOString()
           });
         }
 
+        const staleAssets = snapshot.staleRetainedProviderIds.length
+          ? await tx.asset.findMany({
+              where: {
+                providerId: { in: snapshot.staleRetainedProviderIds },
+                isActive: true,
+                trackedUntil: { gte: capturedAt }
+              },
+              include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
+            })
+          : [];
+        for (const asset of staleAssets) {
+          const latestMetric = asset.metrics[0];
+          if (!latestMetric) continue;
+          await tx.assetMetric.upsert({
+            where: { assetId_capturedAt: { assetId: asset.id, capturedAt } },
+            update: {
+              price: latestMetric.price,
+              marketCap: latestMetric.marketCap,
+              volume24h: latestMetric.volume24h,
+              change1h: latestMetric.change1h,
+              change24h: latestMetric.change24h,
+              baselineVolume: null,
+              baselineCapturedAt: null,
+              volumeDelta24h: null,
+              absoluteVolumeDelta: null,
+              volumeSignalScore: null,
+              baselineStatus: "stale",
+              providerUpdatedAt: latestMetric.providerUpdatedAt
+            },
+            create: {
+              assetId: asset.id,
+              capturedAt,
+              price: latestMetric.price,
+              marketCap: latestMetric.marketCap,
+              volume24h: latestMetric.volume24h,
+              change1h: latestMetric.change1h,
+              change24h: latestMetric.change24h,
+              baselineVolume: null,
+              baselineCapturedAt: null,
+              volumeDelta24h: null,
+              absoluteVolumeDelta: null,
+              volumeSignalScore: null,
+              baselineStatus: "stale",
+              providerUpdatedAt: latestMetric.providerUpdatedAt
+            }
+          });
+        }
+
+        const activeAssetRecords = await tx.asset.findMany({
+          where: { isActive: true, trackedUntil: { gte: capturedAt } },
+          orderBy: { currentVolume: "desc" },
+          include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
+        });
+        const persistedAssets = activeAssetRecords.map(mapAssetRecord);
         const counts = new Map<string, number>();
         for (const asset of persistedAssets) counts.set(asset.categoryId, (counts.get(asset.categoryId) ?? 0) + 1);
-        const categories: Category[] = storedCategories.map((category) => ({
-          id: category.id,
-          providerId: category.providerId,
-          name: category.name,
-          marketCapChange24h: category.marketCapChange24h,
-          assetCount: counts.get(category.id) ?? 0,
-          updatedAt: category.updatedAt.toISOString()
-        }));
+        const categoryRecords = await tx.category.findMany({ orderBy: { marketCapChange24h: "desc" } });
+        const categories: Category[] = categoryRecords.map((category) =>
+          mapCategoryRecord(category, counts.get(category.id) ?? 0)
+        );
         const finishedAt = new Date();
         const latestScan: ScanJob = {
           id: context.id,
@@ -319,7 +477,7 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
           processedCount: persistedAssets.length,
           errorMessage: null
         };
-        const dashboard = createDashboardPayload(persistedAssets, categories, latestScan, snapshot.updatedAt);
+        const dashboard = createDashboardPayload(persistedAssets, categories, latestScan, capturedAt.toISOString());
 
         await tx.scanJob.update({
           where: { id: context.id },
@@ -327,14 +485,14 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
         });
         await tx.cacheSnapshot.upsert({
           where: { snapshotType: "dashboard" },
-          update: { payload: toJson(dashboard), refreshedAt: new Date(snapshot.updatedAt) },
-          create: { snapshotType: "dashboard", payload: toJson(dashboard), refreshedAt: new Date(snapshot.updatedAt) }
+          update: { payload: toJson(dashboard), refreshedAt: capturedAt },
+          create: { snapshotType: "dashboard", payload: toJson(dashboard), refreshedAt: capturedAt }
         });
         const retentionCutoff = new Date(Date.now() - getRuntimeConfig().metricRetentionDays * 24 * 60 * 60_000);
         await tx.assetMetric.deleteMany({ where: { capturedAt: { lt: retentionCutoff } } });
         return dashboard;
       },
-      { timeout: 30_000 }
+      { maxWait: 10_000, timeout: 120_000 }
     );
 
     await writeDashboardCache(payload);

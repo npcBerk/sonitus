@@ -17,9 +17,9 @@ export default async function FiltersPage({ searchParams }: PageProps) {
 
   const leadingCategory = payload.categories.find((category) => category.assetCount > 0);
   const examples = [
+    { label: "Strongest volume shocks", href: "/?sort=signal" },
     { label: leadingCategory ? `High volume ${leadingCategory.name}` : "High volume assets", href: leadingCategory ? `/?category=${encodeURIComponent(leadingCategory.providerId)}&sort=volume&minVolume=1000000000` : "/?sort=volume&minVolume=1000000000" },
     { label: "Volatility leaders", href: "/?sort=volatility" },
-    { label: leadingCategory ? `Category pressure: ${leadingCategory.name}` : "Category pressure", href: leadingCategory ? `/?category=${encodeURIComponent(leadingCategory.providerId)}&sort=change24h` : "/?sort=change24h" }
   ];
 
   return (
@@ -47,7 +47,7 @@ export default async function FiltersPage({ searchParams }: PageProps) {
 
       <section className="grid gap-4 md:grid-cols-3">
         <MetricCard label="Current result count" value={payload.coins.length} tone="cyan" kind="number" help="Matches the active filter state" />
-        <MetricCard label="Highest volume asset" value={payload.coins[0]?.symbol ?? "N/A"} tone="emerald" help="Top row after sorting" />
+        <MetricCard label="Highest volume asset" value={payload.topVolumeAsset?.symbol ?? "N/A"} tone="emerald" help="Highest current spot volume in the filtered universe" />
         <MetricCard label="Health route" value="monitored" tone="violet" help="Use /health for infrastructure signals" />
       </section>
     </div>

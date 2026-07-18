@@ -45,11 +45,13 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <MetricCard label="Price" value={formatDetailedPrice(asset.lastPrice)} kind="text" tone="cyan" />
         <MetricCard label="24h change" value={asset.change24h} kind="signedPercent" tone="emerald" />
         <MetricCard label="Volume / MCap" value={volMcap * 100} kind="percent" tone="violet" help="Share of turnover versus market value" />
-        <MetricCard label="Volume delta" value={asset.volumeDelta24h} kind="signedPercent" tone="amber" />
+        <MetricCard label="Current volume" value={asset.currentVolume} kind="currency" tone="cyan" />
+        <MetricCard label="24h baseline" value={asset.baselineVolume === null ? "—" : formatCompactCurrency(asset.baselineVolume)} tone="violet" />
+        <MetricCard label="Volume delta" value={asset.volumeDelta24h === null ? "—" : formatSignedPercent(asset.volumeDelta24h)} tone="amber" help={asset.baselineStatus.replace("_", " ")} />
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
@@ -96,7 +98,16 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
             <p>Volume: <span className="text-slate-50">{formatCompactCurrency(asset.currentVolume)}</span></p>
             <p>1h change: <span className={asset.change1h >= 0 ? "text-emerald-300" : "text-rose-300"}>{formatSignedPercent(asset.change1h)}</span></p>
             <p>24h change: <span className={asset.change24h >= 0 ? "text-emerald-300" : "text-rose-300"}>{formatSignedPercent(asset.change24h)}</span></p>
-            <p>Volume delta: <span className={asset.volumeDelta24h >= 0 ? "text-emerald-300" : "text-amber-300"}>{formatSignedPercent(asset.volumeDelta24h)}</span></p>
+            <p>Baseline status: <span className="text-slate-50">{asset.baselineStatus.replace("_", " ")}</span></p>
+            <p>Baseline volume: <span className="text-slate-50">{asset.baselineVolume === null ? "—" : formatCompactCurrency(asset.baselineVolume)}</span></p>
+            <p>
+              Volume delta:{" "}
+              <span className={asset.volumeDelta24h !== null && asset.volumeDelta24h >= 0 ? "text-emerald-300" : "text-amber-300"}>
+                {asset.volumeDelta24h === null ? "—" : formatSignedPercent(asset.volumeDelta24h)}
+              </span>
+            </p>
+            <p>Absolute volume delta: <span className="text-slate-50">{asset.absoluteVolumeDelta === null ? "—" : formatCompactCurrency(asset.absoluteVolumeDelta)}</span></p>
+            <p>Signal score: <span className="text-slate-50">{asset.volumeSignalScore?.toFixed(2) ?? "—"}</span></p>
           </div>
           <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
             {asset.change24h >= 0

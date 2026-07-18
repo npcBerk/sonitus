@@ -29,16 +29,18 @@ function buildMockLiveSnapshot(): LiveSnapshot {
       imageUrl: "",
       categoryId: asset.categoryId,
       categoryName: categoriesById.get(asset.categoryId) ?? asset.categoryId,
+      isStablecoin: false,
+      isCandidate: true,
       rank: asset.rank,
       lastPrice: asset.lastPrice,
       currentMarketCap: asset.currentMarketCap,
       currentVolume: asset.currentVolume,
       change1h: asset.change1h,
       change24h: asset.change24h,
-      volumeDelta24h: asset.volumeDelta24h,
       sparkline: asset.sparkline,
       updatedAt: asset.updatedAt
-    }))
+    })),
+    staleRetainedProviderIds: []
   };
 }
 
@@ -55,7 +57,28 @@ export async function runMarketSnapshotOnce() {
   let scan: Awaited<ReturnType<typeof startScanJob>> | null = null;
   try {
     scan = await startScanJob(prisma);
-    const snapshot = getDataMode() === "mock" ? buildMockLiveSnapshot() : await fetchLiveSnapshot();
+    const trackedAssets =
+      getDataMode() === "database"
+        ? await prisma.asset.findMany({
+            where: { isActive: true, trackedUntil: { gte: new Date() } },
+            select: {
+              providerId: true,
+              imageUrl: true,
+              category: { select: { providerId: true, name: true } }
+            }
+          })
+        : [];
+    const snapshot =
+      getDataMode() === "mock"
+        ? buildMockLiveSnapshot()
+        : await fetchLiveSnapshot(
+            trackedAssets.map((asset) => ({
+              providerId: asset.providerId,
+              categoryId: asset.category.providerId,
+              categoryName: asset.category.name,
+              imageUrl: asset.imageUrl ?? ""
+            }))
+          );
     const result = await persistLiveSnapshot(prisma, snapshot, scan);
     return { updatedAt: snapshot.updatedAt, job: result.payload.latestScan };
   } catch (error) {

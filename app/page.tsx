@@ -6,8 +6,8 @@ import { EmptyState } from "@/components/empty-state";
 import { FilterBar } from "@/components/filter-bar";
 import { MetricCard } from "@/components/metric-card";
 import { UpdateStatusBadge } from "@/components/update-status-badge";
-import { VolumeDropPanel } from "@/components/volume-drop-panel";
 import { VolumeMarketCapPanel } from "@/components/volume-market-cap-panel";
+import { VolumeSignalPanel } from "@/components/volume-signal-panel";
 import { VolatilityPanel } from "@/components/volatility-panel";
 import { formatCompactCurrency, formatPercent, formatSignedPercent } from "@/lib/format";
 import { loadDashboardPayload, parseDashboardFilters } from "@/lib/dashboard";
@@ -41,18 +41,18 @@ export default async function DashboardPage({ searchParams }: PageProps) {
             <div className="max-w-3xl space-y-4">
               <p className="text-xs uppercase tracking-[0.4em] text-slate-400">SONITUS / Dashboard</p>
               <h2 className="text-4xl font-semibold leading-tight text-slate-50 sm:text-5xl">
-                Reading the market through volume shock, volatility, and category pressure.
+                Track where market participation is expanding — and where it is disappearing.
               </h2>
               <p className="max-w-2xl text-base leading-7 text-slate-300">
-                This build transforms raw market data into a readable signal layer. Use the filters below to isolate leaders, fast movers, and sectors that are gaining or losing strength.
+                SONITUS compares current rolling 24-hour spot volume with a persisted 24-hour baseline, then ranks liquid assets by the size and quality of that change.
               </p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <MetricCard label="Tracked assets" value={payload.summary.totalAssets} tone="cyan" kind="number" help="Filtered universe in view" />
               <MetricCard label="Total market cap" value={payload.summary.totalMarketCap} tone="emerald" kind="currency" help="Aggregate across the current slice" />
-              <MetricCard label="Average 24h change" value={payload.summary.averageChange24h} tone="violet" kind="signedPercent" help="Momentum balance in the visible set" />
-              <MetricCard label="Leading category" value={payload.summary.leadingCategory} tone="amber" help="Highest weighted 24h category pressure" />
+              <MetricCard label="Ready baselines" value={payload.summary.readyAssets} tone="violet" kind="number" help={`${formatPercent(payload.summary.baselineReadyPercent)} of the visible universe`} />
+              <MetricCard label="Leading category" value={payload.summary.leadingCategory} tone="amber" help="Highest 24h category pressure" />
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
@@ -72,9 +72,9 @@ export default async function DashboardPage({ searchParams }: PageProps) {
               </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Market breadth</p>
-                  <p className="mt-2 text-lg font-medium text-slate-50">{formatPercent(payload.summary.averageVolMcap * 100)}</p>
-                  <p className="text-sm text-slate-400">Average vol / market cap ratio</p>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Baseline coverage</p>
+                  <p className="mt-2 text-lg font-medium text-slate-50">{formatPercent(payload.summary.baselineReadyPercent)}</p>
+                  <p className="text-sm text-slate-400">Assets ready for delta ranking</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-500">24h pressure</p>
@@ -83,7 +83,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
                 </div>
               </div>
               <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/8 p-4 text-sm leading-6 text-cyan-50/90">
-                Signals are computed server-side from persisted snapshots. Volume change uses a 24-hour baseline when sufficient history is available; a zero value means the baseline is not available yet.
+                Missing history is never reported as 0%. Assets stay tracked for 48 hours after leaving the volume-ranked candidate set so sharp contractions remain visible.
               </div>
             </div>
           </div>
@@ -108,17 +108,18 @@ export default async function DashboardPage({ searchParams }: PageProps) {
           description="Try widening the search, lowering the minimum market cap, or resetting the category filter to bring the table back into view."
         />
       ) : (
-        <section className="grid gap-6 xl:grid-cols-[1.7fr_0.9fr]">
-          <div className="space-y-6">
-            <AssetsTable assets={payload.coins} />
-            <CategoryRanking categories={payload.categories} />
-          </div>
-          <div className="space-y-6">
+        <div className="space-y-6">
+          <section className="grid gap-6 xl:grid-cols-2">
+            <VolumeSignalPanel assets={payload.risingVolume} direction="rising" />
+            <VolumeSignalPanel assets={payload.fallingVolume} direction="falling" />
+          </section>
+          <AssetsTable assets={payload.coins} />
+          <section className="grid gap-6 xl:grid-cols-3">
             <VolumeMarketCapPanel assets={payload.highVolMcap} />
             <VolatilityPanel assets={payload.volatileAssets} />
-            <VolumeDropPanel assets={payload.fallingVolume} />
-          </div>
-        </section>
+            <CategoryRanking categories={payload.categories} />
+          </section>
+        </div>
       )}
     </div>
   );

@@ -22,7 +22,10 @@ try {
   assert.ok(snapshot);
   const payload = dashboardPayloadSchema.parse(snapshot.payload);
   assert.equal(payload.latestScan.id, result.job.id);
-  assert.equal(payload.coins.length, result.job.processedCount);
+  assert.ok(payload.coins.length <= result.job.processedCount);
+  assert.ok(payload.coins.every((asset) => asset.baselineStatus === "ready" || asset.volumeDelta24h === null));
+  assert.ok(payload.coins.every((asset) => asset.candidateLastSeenAt && asset.trackedUntil));
+  assert.ok(payload.coins.every((asset) => asset.providerId !== "tether"));
 
   const activeAssets = await prisma.asset.count({ where: { isActive: true } });
   assert.equal(activeAssets, result.job.processedCount);

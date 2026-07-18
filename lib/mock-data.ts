@@ -2,7 +2,18 @@ import type { Asset, Category, ScanJob } from "@/lib/types";
 
 const now = () => new Date().toISOString();
 
-const baseAssets: Asset[] = [
+type MockAsset = Omit<
+  Asset,
+  | "baselineVolume"
+  | "baselineCapturedAt"
+  | "absoluteVolumeDelta"
+  | "volumeSignalScore"
+  | "baselineStatus"
+  | "candidateLastSeenAt"
+  | "trackedUntil"
+>;
+
+const baseAssets: MockAsset[] = [
   {
     id: "bitcoin",
     providerId: "bitcoin",
@@ -217,5 +228,30 @@ export const baseScanJob: ScanJob = {
 };
 
 export function getBaseAssets() {
-  return baseAssets.map((asset) => ({ ...asset, updatedAt: now() }));
+  const timestamp = now();
+  return baseAssets.map((asset): Asset => {
+    const baselineVolume =
+      asset.volumeDelta24h === null
+        ? null
+        : asset.currentVolume / (1 + asset.volumeDelta24h / 100);
+    const absoluteVolumeDelta = baselineVolume === null ? null : asset.currentVolume - baselineVolume;
+    const liquidityWeight =
+      baselineVolume === null
+        ? null
+        : Math.log10(1 + Math.max(asset.currentVolume, baselineVolume) / 1_000_000);
+    return {
+      ...asset,
+      baselineVolume,
+      baselineCapturedAt: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+      absoluteVolumeDelta,
+      volumeSignalScore:
+        liquidityWeight === null || asset.volumeDelta24h === null
+          ? null
+          : Math.abs(asset.volumeDelta24h) * liquidityWeight,
+      baselineStatus: "ready",
+      candidateLastSeenAt: timestamp,
+      trackedUntil: new Date(Date.now() + 48 * 60 * 60_000).toISOString(),
+      updatedAt: timestamp
+    };
+  });
 }

@@ -11,7 +11,7 @@ Uygulama şu sorulara cevap verir:
 - Hangi varlıkların 24 saatlik hacmi artıyor veya azalıyor?
 - Takip edilen varlıkların kategorilerinde piyasa değeri baskısı hangi yönde?
 
-Mevcut sürüm piyasa değerine göre dinamik top 50 varlığı tarar. Dashboard ilk 25 filtrelenmiş sonucu gösterir ve kalanları isteğe bağlı olarak açar. Stablecoin'ler piyasa tablosu ve toplamlarına dahildir; fırsat sinyallerini domine etmemeleri için hacim/volatilite sinyal panellerinden çıkarılır. Dashboard ayrıca varlık ve kategori detay sayfaları, URL tabanlı arama/filtreleme/sıralama, health paneli, okuma API'leri ve kimlik doğrulamalı manuel scan endpoint'i içerir.
+Mevcut sürüm 24 saatlik spot hacme göre dinamik top 250 adayı tarar. İlk 250'den çıkan varlıklar sert hacim daralmalarını kaçırmamak için 48 saat daha izlenir. Dashboard ilk 25 filtrelenmiş sonucu gösterir ve kalanları isteğe bağlı olarak açar. Stablecoin'ler CoinGecko stablecoin evreni, coin kategorileri ve koruyucu provider denylist'i ile ingestion öncesinde elenir; piyasa tablosuna, toplamlarına, kategorilere, sinyal panellerine ve detay API'lerine dahil edilmez. Dashboard ayrıca varlık ve kategori detay sayfaları, URL tabanlı arama/filtreleme/sıralama, health paneli, okuma API'leri ve kimlik doğrulamalı manuel scan endpoint'i içerir.
 
 ## Gerçek mimari
 
@@ -68,8 +68,9 @@ Netlify environment değişkenleri `netlify.toml` içine secret olarak yazılmam
 ## Sinyal hesapları
 
 - `Vol/MCap`: `currentVolume / currentMarketCap`; sıfır piyasa değerinde güvenli biçimde `0` kabul edilir.
-- Volatilite skoru: `|1h| × 1.35 + |24h| × 0.95 + |volumeDelta24h| × 0.18`.
-- `volumeDelta24h`: güncel hacim, yaklaşık 24 saat önceki en yakın metrikle karşılaştırılır. Tolerans varsayılan olarak 90 dakikadır. Yeterli tarihçe yoksa değer `0` olur; ilk günden önce gerçek 24 saatlik delta üretilemez.
+- Fiyat volatilitesi skoru: `|1h| × 2 + |24h|`; hacim sinyalinden bağımsızdır.
+- `volumeDelta24h`: güncel hacim, yaklaşık 24 saat önceki en yakın metrikle karşılaştırılır. Tolerans varsayılan olarak 90 dakikadır. Yeterli tarihçe yoksa değer `null` olur ve `warming_up`, `missing` veya `stale` durumuyla açıklanır.
+- Hacim sinyal skoru: `|volumeDelta24h| × log10(1 + max(currentVolume, baselineVolume) / 1_000_000)`.
 - Kategori gücü: CoinGecko kategori market-cap değişimi. Yalnızca taranan varlıkların kullanılan kategorileri saklanır ve gösterilir.
 
 Aynı `asset_id + captured_at` snapshot'ı unique constraint ve upsert ile idempotent işlenir. Metrikler varsayılan 30 günlük retention süresinden sonra temizlenir.
@@ -140,9 +141,12 @@ SONITUS_DATA_MODE=database npm run worker:scan
 | `SCAN_LOCK_SECONDS` | Hayır | Çakışan ingestion'ları engelleyen Redis lock TTL; varsayılan `1200` |
 | `METRIC_RETENTION_DAYS` | Hayır | Varsayılan `30` |
 | `VOLUME_BASELINE_TOLERANCE_MINUTES` | Hayır | 24 saatlik baseline toleransı; varsayılan `90` |
+| `CANDIDATE_RETENTION_HOURS` | Hayır | Hacim aday listesinden çıkan varlığın takip süresi; varsayılan `48` |
+| `MIN_MARKET_CAP_USD` | Hayır | Aday ve görünür sinyal evreni için minimum market cap; varsayılan `25000000` |
+| `MIN_VOLUME_USD` | Hayır | Güncel veya baseline için minimum hacim; varsayılan `5000000` |
 | `CACHE_TTL_SECONDS` | Hayır | Redis dashboard cache TTL; varsayılan `900` |
 | `CATEGORY_CACHE_TTL_SECONDS` | Hayır | Coin kategori metadata cache süresi; varsayılan 7 gün |
-| `COINGECKO_SCAN_LIMIT` | Hayır | Piyasa değerine göre dinamik taranan top varlık sayısı; varsayılan `50` |
+| `COINGECKO_SCAN_LIMIT` | Hayır | Spot 24 saatlik hacme göre dinamik aday sayısı; en fazla ve varsayılan `250` |
 | `COINGECKO_CONCURRENCY` | Hayır | Coin detay istek eşzamanlılığı; varsayılan `4` |
 | `COINGECKO_TIMEOUT_MS` | Hayır | İstek timeout; varsayılan `10000` |
 | `COINGECKO_MAX_RETRIES` | Hayır | 429/5xx/network retry sayısı; varsayılan `3` |

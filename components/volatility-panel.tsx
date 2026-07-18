@@ -8,7 +8,7 @@ type VolatilityPanelProps = {
 };
 
 function score(asset: Asset) {
-  return Math.abs(asset.change1h) * 1.35 + Math.abs(asset.change24h) * 0.95 + Math.abs(asset.volumeDelta24h) * 0.18;
+  return Math.abs(asset.change1h) * 2 + Math.abs(asset.change24h);
 }
 
 export function VolatilityPanel({ assets }: VolatilityPanelProps) {

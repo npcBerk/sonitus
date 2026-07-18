@@ -4,6 +4,7 @@ import { getRuntimeConfig } from "./config";
 import { ConfigurationError } from "./errors";
 import { logger } from "./logger";
 import { readCoinCategoryCache, writeCoinCategoryCache } from "./redis";
+import { isStablecoinCategory, isStablecoinIdentity } from "./stablecoins";
 
 type CoinGeckoApiMode = "public" | "demo" | "pro";
 
@@ -41,7 +42,8 @@ const coinDetailSchema = z.object({
 const coinCategoryMetaSchema = z.object({
   categoryId: z.string().min(1),
   categoryName: z.string().min(1),
-  imageUrl: z.string()
+  imageUrl: z.string(),
+  isStablecoin: z.boolean()
 });
 
 export type LiveCoin = {
@@ -51,15 +53,23 @@ export type LiveCoin = {
   imageUrl: string;
   categoryId: string;
   categoryName: string;
+  isStablecoin: boolean;
+  isCandidate: boolean;
   rank: number;
   lastPrice: number;
   currentMarketCap: number;
   currentVolume: number;
   change1h: number;
   change24h: number;
-  volumeDelta24h: number;
   sparkline: number[];
   updatedAt: string;
+};
+
+export type TrackedAssetSeed = {
+  providerId: string;
+  categoryId: string;
+  categoryName: string;
+  imageUrl: string;
 };
 
 export type LiveCategory = {
@@ -75,6 +85,7 @@ export type LiveSnapshot = {
   updatedAt: string;
   coins: LiveCoin[];
   categories: LiveCategory[];
+  staleRetainedProviderIds: string[];
 };
 
 const DEFAULT_BASE_URL = "https://api.coingecko.com/api/v3";
@@ -186,12 +197,53 @@ async function requestJson<T>(
 async function fetchMarketCoins(limit: number) {
   return requestJson("/coins/markets", z.array(marketCoinSchema), {
     vs_currency: "usd",
-    order: "market_cap_desc",
+    order: "volume_desc",
     per_page: Math.min(250, Math.max(1, limit)),
     page: 1,
     sparkline: true,
     price_change_percentage: "1h,24h,7d"
   });
+}
+
+async function fetchMarketCoinsByIds(providerIds: string[]) {
+  const coins: z.infer<typeof marketCoinSchema>[] = [];
+  const staleProviderIds = new Set<string>();
+  for (let index = 0; index < providerIds.length; index += 250) {
+    const batch = providerIds.slice(index, index + 250);
+    try {
+      const result = await requestJson("/coins/markets", z.array(marketCoinSchema), {
+        vs_currency: "usd",
+        ids: batch.join(","),
+        order: "volume_desc",
+        per_page: batch.length,
+        page: 1,
+        sparkline: true,
+        price_change_percentage: "1h,24h,7d"
+      });
+      coins.push(...result);
+      const returnedIds = new Set(result.map((coin) => coin.id));
+      for (const providerId of batch) {
+        if (!returnedIds.has(providerId)) staleProviderIds.add(providerId);
+      }
+    } catch (error) {
+      logger.warn({ err: error, count: batch.length }, "Retained asset refresh failed; previous metrics will be marked stale");
+      for (const providerId of batch) staleProviderIds.add(providerId);
+    }
+  }
+  return { coins, staleProviderIds };
+}
+
+async function fetchStablecoinProviderIds() {
+  const stablecoins = await requestJson("/coins/markets", z.array(marketCoinSchema), {
+    vs_currency: "usd",
+    category: "stablecoins",
+    order: "volume_desc",
+    per_page: 250,
+    page: 1,
+    sparkline: false,
+    price_change_percentage: "1h,24h"
+  });
+  return new Set(stablecoins.map((coin) => coin.id));
 }
 
 async function fetchCategoryMarkets() {
@@ -217,11 +269,16 @@ async function fetchCategoryForCoin(coinId: string) {
     developer_data: false,
     sparkline: false
   });
-  const candidate = detail.categories.find((category) => !isGenericCategory(category)) ?? detail.categories[0] ?? "Uncategorized";
+  const isStablecoin = detail.categories.some(isStablecoinCategory);
+  const candidate =
+    detail.categories.find((category) => !isGenericCategory(category) && !isStablecoinCategory(category)) ??
+    detail.categories[0] ??
+    "Uncategorized";
   const categoryMeta = coinCategoryMetaSchema.parse({
     categoryId: slugifyCategoryName(candidate) || "uncategorized",
     categoryName: canonicalCategoryName(candidate) || "Uncategorized",
-    imageUrl: detail.image.small || detail.image.thumb || detail.image.large || ""
+    imageUrl: detail.image.small || detail.image.thumb || detail.image.large || "",
+    isStablecoin
   });
   await writeCoinCategoryCache(coinId, JSON.stringify(categoryMeta));
   return categoryMeta;
@@ -241,24 +298,50 @@ async function mapWithConcurrency<T, R>(values: T[], concurrency: number, mapper
   return results;
 }
 
-export async function fetchLiveSnapshot(limit = getRuntimeConfig().scanLimit): Promise<LiveSnapshot> {
-  const [marketCoins, categoryMarkets] = await Promise.all([
-    fetchMarketCoins(limit),
+export async function fetchLiveSnapshot(
+  trackedAssets: TrackedAssetSeed[] = [],
+  limit = getRuntimeConfig().scanLimit
+): Promise<LiveSnapshot> {
+  const candidateLimit = Math.min(250, limit);
+  const [marketCoins, categoryMarkets, stablecoinProviderIds] = await Promise.all([
+    fetchMarketCoins(candidateLimit),
     fetchCategoryMarkets().catch((error) => {
       logger.warn({ err: error }, "Category market request failed; coin snapshots will continue without category momentum");
       return [];
+    }),
+    fetchStablecoinProviderIds().catch((error) => {
+      logger.warn({ err: error }, "Stablecoin universe request failed; category metadata and the local denylist will be used");
+      return new Set<string>();
     })
   ]);
 
   if (marketCoins.length === 0) throw new Error("CoinGecko returned an empty market snapshot");
 
-  const coinsWithCategories = await mapWithConcurrency(
-    marketCoins.slice(0, limit),
+  const config = getRuntimeConfig();
+  const candidateCoins = marketCoins
+    .filter((coin) => !stablecoinProviderIds.has(coin.id) && !isStablecoinIdentity({ providerId: coin.id }))
+    .filter((coin) => (coin.market_cap ?? 0) >= config.minMarketCapUsd && (coin.total_volume ?? 0) >= config.minVolumeUsd)
+    .slice(0, candidateLimit);
+  const candidateIds = new Set(candidateCoins.map((coin) => coin.id));
+  const retainedSeeds = trackedAssets.filter(
+    (asset) => !candidateIds.has(asset.providerId) && !stablecoinProviderIds.has(asset.providerId) && !isStablecoinIdentity(asset)
+  );
+  const retainedRefresh = await fetchMarketCoinsByIds(retainedSeeds.map((asset) => asset.providerId));
+  const retainedSeedById = new Map(retainedSeeds.map((asset) => [asset.providerId, asset]));
+  const marketUniverse = [
+    ...candidateCoins.map((coin) => ({ coin, isCandidate: true })),
+    ...retainedRefresh.coins.map((coin) => ({ coin, isCandidate: false }))
+  ];
+  const mappedCoins = await mapWithConcurrency(
+    marketUniverse,
     getRuntimeConfig().providerConcurrency,
-    async (coin): Promise<LiveCoin> => {
+    async ({ coin, isCandidate }): Promise<LiveCoin> => {
+      const retainedSeed = retainedSeedById.get(coin.id);
       const categoryMeta = await fetchCategoryForCoin(coin.id).catch((error) => {
         logger.warn({ err: error, providerId: coin.id }, "Coin category lookup failed");
-        return { categoryId: "uncategorized", categoryName: "Uncategorized", imageUrl: "" };
+        return retainedSeed
+          ? { ...retainedSeed, isStablecoin: false }
+          : { categoryId: "uncategorized", categoryName: "Uncategorized", imageUrl: "", isStablecoin: false };
       });
       return {
         providerId: coin.id,
@@ -267,18 +350,23 @@ export async function fetchLiveSnapshot(limit = getRuntimeConfig().scanLimit): P
         imageUrl: coin.image || categoryMeta.imageUrl,
         categoryId: categoryMeta.categoryId,
         categoryName: categoryMeta.categoryName,
+        isStablecoin: categoryMeta.isStablecoin,
+        isCandidate,
         rank: coin.market_cap_rank ?? 0,
         lastPrice: coin.current_price ?? 0,
         currentMarketCap: coin.market_cap ?? 0,
         currentVolume: coin.total_volume ?? 0,
         change1h: coin.price_change_percentage_1h_in_currency ?? 0,
         change24h: coin.price_change_percentage_24h_in_currency ?? 0,
-        volumeDelta24h: 0,
         sparkline: coin.sparkline_in_7d?.price ?? [],
         updatedAt: coin.last_updated
       };
     }
   );
+  const coinsWithCategories = mappedCoins
+    .filter((coin) => !isStablecoinIdentity(coin));
+
+  if (coinsWithCategories.length === 0) throw new Error("CoinGecko returned no non-stablecoin assets");
 
   const categoryMarketBySlug = new Map<string, z.infer<typeof categoryMarketSchema>>();
   for (const category of categoryMarkets) {
@@ -311,7 +399,8 @@ export async function fetchLiveSnapshot(limit = getRuntimeConfig().scanLimit): P
     source: "coingecko",
     updatedAt,
     coins: coinsWithCategories,
-    categories: Array.from(categoriesById.values()).sort((a, b) => b.marketCapChange24h - a.marketCapChange24h)
+    categories: Array.from(categoriesById.values()).sort((a, b) => b.marketCapChange24h - a.marketCapChange24h),
+    staleRetainedProviderIds: Array.from(retainedRefresh.staleProviderIds)
   };
 }
 

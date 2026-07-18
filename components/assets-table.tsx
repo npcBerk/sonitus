@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { formatCompactCurrency, formatPrice, formatSignedPercent } from "@/lib/format";
-import type { Asset } from "@/lib/types";
+import { formatCompactCurrency, formatDetailedPrice, formatSignedPercent } from "@/lib/format";
+import type { Asset, VolumeBaselineStatus } from "@/lib/types";
 
 type AssetsTableProps = {
   assets: Asset[];
@@ -12,7 +12,17 @@ type AssetsTableProps = {
 
 export const INITIAL_VISIBLE_ASSET_COUNT = 25;
 
-export type AssetSortKey = "name" | "price" | "change1h" | "change24h" | "volume" | "marketCap" | "volMcap" | "volumeDelta";
+export type AssetSortKey =
+  | "name"
+  | "change1h"
+  | "change24h"
+  | "price"
+  | "volume"
+  | "baselineVolume"
+  | "volumeDelta"
+  | "absoluteVolumeDelta"
+  | "signal"
+  | "volMcap";
 export type SortDirection = "asc" | "desc";
 
 export function getVisibleAssets(assets: Asset[], showAll: boolean) {
@@ -23,12 +33,13 @@ export function shouldShowAssetsToggle(assetCount: number) {
   return assetCount > INITIAL_VISIBLE_ASSET_COUNT;
 }
 
-function volatilityScore(asset: Asset) {
-  return Math.abs(asset.change1h) * 1.35 + Math.abs(asset.change24h) * 0.95 + Math.abs(asset.volumeDelta24h) * 0.18;
-}
-
 function volumeMarketCapRatio(asset: Asset) {
   return asset.currentMarketCap > 0 ? asset.currentVolume / asset.currentMarketCap : 0;
+}
+
+function nullableValue(value: number | null, direction: SortDirection) {
+  if (value !== null) return value;
+  return direction === "asc" ? Number.MAX_VALUE : -Number.MAX_VALUE;
 }
 
 export function sortAssets(assets: Asset[], sortKey: AssetSortKey, direction: SortDirection) {
@@ -41,26 +52,40 @@ export function sortAssets(assets: Asset[], sortKey: AssetSortKey, direction: So
       case "name":
         comparison = left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
         break;
-      case "price":
-        comparison = left.lastPrice - right.lastPrice;
-        break;
       case "change1h":
         comparison = left.change1h - right.change1h;
         break;
       case "change24h":
         comparison = left.change24h - right.change24h;
         break;
+      case "price":
+        comparison = left.lastPrice - right.lastPrice;
+        break;
       case "volume":
         comparison = left.currentVolume - right.currentVolume;
         break;
-      case "marketCap":
-        comparison = left.currentMarketCap - right.currentMarketCap;
+      case "baselineVolume":
+        comparison =
+          nullableValue(left.baselineVolume, direction) -
+          nullableValue(right.baselineVolume, direction);
         break;
       case "volMcap":
         comparison = volumeMarketCapRatio(left) - volumeMarketCapRatio(right);
         break;
       case "volumeDelta":
-        comparison = left.volumeDelta24h - right.volumeDelta24h;
+        comparison =
+          nullableValue(left.volumeDelta24h, direction) -
+          nullableValue(right.volumeDelta24h, direction);
+        break;
+      case "absoluteVolumeDelta":
+        comparison =
+          nullableValue(left.absoluteVolumeDelta, direction) -
+          nullableValue(right.absoluteVolumeDelta, direction);
+        break;
+      case "signal":
+        comparison =
+          nullableValue(left.volumeSignalScore, direction) -
+          nullableValue(right.volumeSignalScore, direction);
         break;
     }
 
@@ -80,10 +105,7 @@ function SortableHeader({ label, sortKey, activeSortKey, direction, onSort }: So
   const isActive = activeSortKey === sortKey;
 
   return (
-    <th
-      className="px-5 py-4 font-medium"
-      aria-sort={isActive ? (direction === "asc" ? "ascending" : "descending") : "none"}
-    >
+    <th className="px-4 py-4 font-medium" aria-sort={isActive ? (direction === "asc" ? "ascending" : "descending") : "none"}>
       <button
         type="button"
         className="group inline-flex items-center gap-2 whitespace-nowrap transition hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70"
@@ -96,6 +118,28 @@ function SortableHeader({ label, sortKey, activeSortKey, direction, onSort }: So
       </button>
     </th>
   );
+}
+
+const statusLabels: Record<VolumeBaselineStatus, string> = {
+  warming_up: "24h history warming up",
+  ready: "Ready",
+  missing: "Baseline missing",
+  stale: "Provider data stale"
+};
+
+const statusClasses: Record<VolumeBaselineStatus, string> = {
+  warming_up: "border-amber-300/20 bg-amber-300/10 text-amber-200",
+  ready: "border-emerald-300/20 bg-emerald-300/10 text-emerald-200",
+  missing: "border-rose-300/20 bg-rose-300/10 text-rose-200",
+  stale: "border-slate-300/20 bg-slate-300/10 text-slate-300"
+};
+
+function deltaHeat(delta: number | null) {
+  if (delta === null) return "transparent";
+  const intensity = Math.min(0.38, 0.06 + Math.abs(delta) / 300);
+  return delta >= 0
+    ? `rgba(16, 185, 129, ${intensity})`
+    : `rgba(244, 63, 94, ${intensity})`;
 }
 
 export function AssetsTable({ assets }: AssetsTableProps) {
@@ -124,53 +168,80 @@ export function AssetsTable({ assets }: AssetsTableProps) {
       <div className="border-b border-white/10 px-5 py-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Asset screen</p>
-            <h2 className="mt-2 text-xl font-semibold text-slate-50">High signal assets</h2>
+            <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Tracked universe</p>
+            <h2 className="mt-2 text-xl font-semibold text-slate-50">24h volume delta screen</h2>
           </div>
-          <p className="text-sm text-slate-400">
-            {visibleAssets.length} / {assets.length} results
-          </p>
+          <p className="text-sm text-slate-400">{visibleAssets.length} / {assets.length} results</p>
         </div>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-[960px] w-full">
-          <thead className="bg-white/3 text-left text-xs uppercase tracking-[0.25em] text-slate-400">
+        <table className="w-full min-w-[1500px]">
+          <thead className="bg-white/3 text-left text-[10px] uppercase tracking-[0.22em] text-slate-400">
             <tr>
               <SortableHeader label="Asset" sortKey="name" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
               <SortableHeader label="Price" sortKey="price" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
-              <SortableHeader label="1h" sortKey="change1h" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
-              <SortableHeader label="24h" sortKey="change24h" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
-              <SortableHeader label="Volume" sortKey="volume" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
-              <SortableHeader label="Market cap" sortKey="marketCap" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Current volume" sortKey="volume" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <SortableHeader label="24h baseline" sortKey="baselineVolume" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Volume Δ %" sortKey="volumeDelta" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Volume Δ $" sortKey="absoluteVolumeDelta" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <SortableHeader label="Signal score" sortKey="signal" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
               <SortableHeader label="Vol/MCap" sortKey="volMcap" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
-              <SortableHeader label="Volume delta" sortKey="volumeDelta" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <SortableHeader label="1h price" sortKey="change1h" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <SortableHeader label="24h price" sortKey="change24h" activeSortKey={sortKey} direction={sortDirection} onSort={handleSort} />
+              <th className="px-4 py-4 font-medium">Data status</th>
             </tr>
           </thead>
           <tbody>
             {visibleAssets.map((asset) => (
               <tr key={asset.id} className="border-t border-white/5 transition hover:bg-white/[0.03]">
-                <td className="px-5 py-4">
+                <td className="px-4 py-4">
                   <Link href={`/assets/${asset.id}`} className="group flex items-center gap-3">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-cyan-100">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-xs font-semibold text-cyan-100">
                       {asset.symbol.slice(0, 4)}
                     </div>
                     <div>
                       <p className="font-medium text-slate-50 group-hover:text-cyan-200">{asset.name}</p>
-                      <p className="text-sm text-slate-400">{asset.symbol}</p>
+                      <p className="text-xs text-slate-500">{asset.symbol}</p>
                     </div>
                   </Link>
                 </td>
-                <td className="px-5 py-4 text-sm text-slate-100">{formatPrice(asset.lastPrice)}</td>
-                <td className={`px-5 py-4 text-sm font-medium ${asset.change1h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatSignedPercent(asset.change1h)}</td>
-                <td className={`px-5 py-4 text-sm font-medium ${asset.change24h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{formatSignedPercent(asset.change24h)}</td>
-                <td className="px-5 py-4 text-sm text-slate-100">{formatCompactCurrency(asset.currentVolume)}</td>
-                <td className="px-5 py-4 text-sm text-slate-100">{formatCompactCurrency(asset.currentMarketCap)}</td>
-                <td className="px-5 py-4 text-sm text-slate-200">
-                  {volumeMarketCapRatio(asset).toFixed(3)}
+                <td className="whitespace-nowrap px-4 py-4 text-sm font-medium text-slate-100">
+                  {formatDetailedPrice(asset.lastPrice)}
                 </td>
-                <td className={`px-5 py-4 text-sm font-medium ${asset.volumeDelta24h >= 0 ? "text-emerald-300" : "text-amber-300"}`}>
-                  {formatSignedPercent(asset.volumeDelta24h)}
+                <td className="px-4 py-4 text-sm text-slate-100">{formatCompactCurrency(asset.currentVolume)}</td>
+                <td className="px-4 py-4 text-sm text-slate-300">
+                  {asset.baselineVolume === null ? "—" : formatCompactCurrency(asset.baselineVolume)}
+                </td>
+                <td
+                  className={`px-4 py-4 text-sm font-semibold ${
+                    asset.volumeDelta24h === null
+                      ? "text-slate-500"
+                      : asset.volumeDelta24h >= 0
+                        ? "text-emerald-200"
+                        : "text-rose-200"
+                  }`}
+                  style={{ background: deltaHeat(asset.volumeDelta24h) }}
+                >
+                  {asset.volumeDelta24h === null ? "—" : formatSignedPercent(asset.volumeDelta24h)}
+                </td>
+                <td className="px-4 py-4 text-sm text-slate-300">
+                  {asset.absoluteVolumeDelta === null ? "—" : formatCompactCurrency(asset.absoluteVolumeDelta)}
+                </td>
+                <td className="px-4 py-4 text-sm font-semibold text-cyan-200">
+                  {asset.volumeSignalScore?.toFixed(1) ?? "—"}
+                </td>
+                <td className="px-4 py-4 text-sm text-slate-300">{volumeMarketCapRatio(asset).toFixed(3)}</td>
+                <td className={`px-4 py-4 text-sm font-medium ${asset.change1h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {formatSignedPercent(asset.change1h)}
+                </td>
+                <td className={`px-4 py-4 text-sm font-medium ${asset.change24h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {formatSignedPercent(asset.change24h)}
+                </td>
+                <td className="px-4 py-4">
+                  <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] ${statusClasses[asset.baselineStatus]}`}>
+                    {statusLabels[asset.baselineStatus]}
+                  </span>
                 </td>
               </tr>
             ))}
@@ -189,18 +260,6 @@ export function AssetsTable({ assets }: AssetsTableProps) {
           </button>
         </div>
       ) : null}
-
-      <div className="grid gap-3 border-t border-white/10 px-5 py-4 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-4">
-        {assets.slice(0, 4).map((asset) => (
-          <div key={asset.id} className="rounded-2xl border border-white/10 bg-white/5 p-3">
-            <p className="text-slate-200">{asset.symbol}</p>
-            <p className="mt-1 text-xs text-slate-400">Volatility score {volatilityScore(asset).toFixed(2)}</p>
-            <div className="mt-3 h-1.5 rounded-full bg-white/5">
-              <div className="h-1.5 rounded-full bg-gradient-to-r from-cyan-300 to-violet-400" style={{ width: `${Math.min(100, volatilityScore(asset) * 2)}%` }} />
-            </div>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }
