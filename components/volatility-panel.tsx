@@ -1,13 +1,13 @@
 import Link from "next/link";
 
 import { formatSignedPercent } from "@/lib/format";
-import type { Asset } from "@/lib/types";
+import type { DashboardAsset } from "@/lib/types";
 
 type VolatilityPanelProps = {
-  assets: Asset[];
+  assets: DashboardAsset[];
 };
 
-function score(asset: Asset) {
+function score(asset: DashboardAsset) {
   return Math.abs(asset.change1h) * 2 + Math.abs(asset.change24h);
 }
 

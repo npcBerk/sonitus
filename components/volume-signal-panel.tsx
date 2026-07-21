@@ -1,10 +1,10 @@
 import Link from "next/link";
 
 import { formatCompactCurrency, formatSignedPercent } from "@/lib/format";
-import type { Asset } from "@/lib/types";
+import type { DashboardAsset } from "@/lib/types";
 
 type VolumeSignalPanelProps = {
-  assets: Asset[];
+  assets: DashboardAsset[];
   direction: "rising" | "falling";
 };
 

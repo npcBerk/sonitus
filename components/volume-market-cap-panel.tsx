@@ -1,9 +1,9 @@
 import Link from "next/link";
 
 import { formatCompactCurrency, formatPercent } from "@/lib/format";
-import type { Asset } from "@/lib/types";
+import type { DashboardAsset } from "@/lib/types";
 
-export function VolumeMarketCapPanel({ assets }: { assets: Asset[] }) {
+export function VolumeMarketCapPanel({ assets }: { assets: DashboardAsset[] }) {
   const ratios = assets.map((asset) =>
     asset.currentMarketCap > 0 ? (asset.currentVolume / asset.currentMarketCap) * 100 : 0
   );

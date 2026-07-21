@@ -1,15 +1,20 @@
 import { randomUUID } from "node:crypto";
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 
 import type { LiveSnapshot } from "./coingecko";
 import { getRuntimeConfig } from "./config";
-import { createDashboardPayload, mapAssetRecord, runScanJob } from "./dashboard";
+import {
+  createDashboardSnapshot,
+  dashboardAssetSelect,
+  mapDashboardAssetRecord,
+  runScanJob
+} from "./dashboard";
 import { logger } from "./logger";
 import { baseScanJob, getBaseAssets } from "./mock-data";
 import { writeDashboardCache } from "./redis";
 import { isStablecoinIdentity, KNOWN_STABLECOIN_PROVIDER_IDS } from "./stablecoins";
-import type { Asset, ScanJob, VolumeBaselineStatus } from "./types";
+import type { Asset, DashboardAsset, ScanJob, VolumeBaselineStatus } from "./types";
 
 type SeedOptions = {
   clearExisting?: boolean;
@@ -78,7 +83,8 @@ export async function startScanJob(prisma: PrismaClient): Promise<ScanContext> {
       jobType: "market-snapshot",
       status: "running",
       startedAt: context.startedAt
-    }
+    },
+    select: { id: true }
   });
   return context;
 }
@@ -91,7 +97,8 @@ export async function failScanJob(prisma: PrismaClient, context: ScanContext, er
         status: "failed",
         finishedAt: new Date(),
         errorMessage: errorMessage(error)
-      }
+      },
+      select: { id: true }
     })
     .catch((updateError) => logger.error({ err: updateError, scanId: context.id }, "Failed to persist failed scan status"));
 }
@@ -185,17 +192,236 @@ export async function seedMockSnapshot(prisma: PrismaClient, options: SeedOption
       finishedAt: latestScan.finishedAt ? new Date(latestScan.finishedAt) : null,
       processedCount: persistedAssets.length,
       errorMessage: latestScan.errorMessage
-    }
+    },
+    select: { id: true }
   });
 
-  const payload = createDashboardPayload(persistedAssets, latestScan, latestScan.finishedAt ?? new Date().toISOString());
+  const payload = createDashboardSnapshot(
+    persistedAssets.map(({ sparkline: _sparkline, ...asset }) => {
+      void _sparkline;
+      return asset;
+    }),
+    latestScan,
+    latestScan.finishedAt ?? new Date().toISOString()
+  );
   await prisma.cacheSnapshot.upsert({
     where: { snapshotType: "dashboard" },
     update: { payload: toJson(payload), refreshedAt: new Date(payload.updatedAt) },
-    create: { snapshotType: "dashboard", payload: toJson(payload), refreshedAt: new Date(payload.updatedAt) }
+    create: { snapshotType: "dashboard", payload: toJson(payload), refreshedAt: new Date(payload.updatedAt) },
+    select: { id: true }
   });
   await writeDashboardCache(payload);
   return { assets: persistedAssets.length };
+}
+
+type StoredAsset = {
+  id: string;
+  providerId: string;
+};
+
+type BaselineLookup = {
+  assetId: string;
+  firstCapturedAt: Date | null;
+  baselineCapturedAt: Date | null;
+  baselineVolume: number | null;
+};
+
+async function bulkUpsertAssets(
+  tx: Prisma.TransactionClient,
+  coins: LiveSnapshot["coins"],
+  capturedAt: Date,
+  retentionUntil: Date
+): Promise<StoredAsset[]> {
+  await tx.asset.createMany({
+    data: coins.map((coin) => ({
+      providerId: coin.providerId,
+      symbol: coin.symbol,
+      name: coin.name,
+      imageUrl: coin.imageUrl || null,
+      isActive: true,
+      rank: coin.rank,
+      currentMarketCap: coin.currentMarketCap,
+      currentVolume: coin.currentVolume,
+      lastPrice: coin.lastPrice,
+      candidateLastSeenAt: coin.isCandidate ? capturedAt : null,
+      trackedUntil: coin.isCandidate ? retentionUntil : capturedAt,
+      sparkline: coin.sparkline
+    })),
+    skipDuplicates: true
+  });
+
+  const updatePayload = coins.map((coin) => ({
+    provider_id: coin.providerId,
+    symbol: coin.symbol,
+    name: coin.name,
+    image_url: coin.imageUrl || null,
+    is_candidate: coin.isCandidate,
+    rank: coin.rank,
+    current_market_cap: coin.currentMarketCap,
+    current_volume: coin.currentVolume,
+    last_price: coin.lastPrice,
+    sparkline: coin.sparkline
+  }));
+  await tx.$executeRaw(Prisma.sql`
+    WITH input AS (
+      SELECT *
+      FROM jsonb_to_recordset(${JSON.stringify(updatePayload)}::jsonb) AS value(
+        provider_id text,
+        symbol text,
+        name text,
+        image_url text,
+        is_candidate boolean,
+        rank integer,
+        current_market_cap double precision,
+        current_volume double precision,
+        last_price double precision,
+        sparkline double precision[]
+      )
+    )
+    UPDATE assets AS asset
+    SET
+      symbol = input.symbol,
+      name = input.name,
+      image_url = input.image_url,
+      is_active = true,
+      rank = input.rank,
+      current_market_cap = input.current_market_cap,
+      current_volume = input.current_volume,
+      last_price = input.last_price,
+      candidate_last_seen_at = CASE
+        WHEN input.is_candidate THEN ${capturedAt}
+        ELSE asset.candidate_last_seen_at
+      END,
+      tracked_until = CASE
+        WHEN input.is_candidate THEN ${retentionUntil}
+        ELSE asset.tracked_until
+      END,
+      sparkline = input.sparkline,
+      updated_at = ${capturedAt}
+    FROM input
+    WHERE asset.provider_id = input.provider_id
+  `);
+
+  return tx.asset.findMany({
+    where: { providerId: { in: coins.map((coin) => coin.providerId) } },
+    select: { id: true, providerId: true }
+  });
+}
+
+async function loadBaselineLookups(
+  tx: Prisma.TransactionClient,
+  assetIds: string[],
+  baselineTarget: Date,
+  toleranceMs: number
+): Promise<BaselineLookup[]> {
+  if (assetIds.length === 0) return [];
+  const lowerBound = new Date(baselineTarget.getTime() - toleranceMs);
+  const upperBound = new Date(baselineTarget.getTime() + toleranceMs);
+  return tx.$queryRaw<BaselineLookup[]>(Prisma.sql`
+    WITH input AS (
+      SELECT value AS asset_id
+      FROM jsonb_array_elements_text(${JSON.stringify(assetIds)}::jsonb)
+    )
+    SELECT
+      input.asset_id AS "assetId",
+      first_metric.captured_at AS "firstCapturedAt",
+      baseline.captured_at AS "baselineCapturedAt",
+      baseline.volume_24h AS "baselineVolume"
+    FROM input
+    LEFT JOIN LATERAL (
+      SELECT metric.captured_at
+      FROM asset_metrics AS metric
+      WHERE metric.asset_id = input.asset_id
+      ORDER BY metric.captured_at ASC
+      LIMIT 1
+    ) AS first_metric ON true
+    LEFT JOIN LATERAL (
+      SELECT metric.captured_at, metric.volume_24h
+      FROM asset_metrics AS metric
+      WHERE metric.asset_id = input.asset_id
+        AND metric.captured_at >= ${lowerBound}
+        AND metric.captured_at <= ${upperBound}
+      ORDER BY abs(extract(epoch FROM (metric.captured_at - ${baselineTarget}))) ASC
+      LIMIT 1
+    ) AS baseline ON true
+  `);
+}
+
+type MetricWrite = {
+  assetId: string;
+  capturedAt: Date;
+  price: number;
+  marketCap: number;
+  volume24h: number;
+  change1h: number;
+  change24h: number;
+  baselineVolume: number | null;
+  baselineCapturedAt: Date | null;
+  volumeDelta24h: number | null;
+  absoluteVolumeDelta: number | null;
+  volumeSignalScore: number | null;
+  baselineStatus: VolumeBaselineStatus;
+  providerUpdatedAt: Date;
+};
+
+async function bulkUpsertMetrics(tx: Prisma.TransactionClient, metrics: MetricWrite[]) {
+  if (metrics.length === 0) return;
+  await tx.assetMetric.createMany({ data: metrics, skipDuplicates: true });
+
+  const updatePayload = metrics.map((metric) => ({
+    asset_id: metric.assetId,
+    captured_at: metric.capturedAt.toISOString(),
+    price: metric.price,
+    market_cap: metric.marketCap,
+    volume_24h: metric.volume24h,
+    change_1h: metric.change1h,
+    change_24h: metric.change24h,
+    baseline_volume: metric.baselineVolume,
+    baseline_captured_at: metric.baselineCapturedAt?.toISOString() ?? null,
+    volume_delta_24h: metric.volumeDelta24h,
+    absolute_volume_delta: metric.absoluteVolumeDelta,
+    volume_signal_score: metric.volumeSignalScore,
+    baseline_status: metric.baselineStatus,
+    provider_updated_at: metric.providerUpdatedAt.toISOString()
+  }));
+  await tx.$executeRaw(Prisma.sql`
+    WITH input AS (
+      SELECT *
+      FROM jsonb_to_recordset(${JSON.stringify(updatePayload)}::jsonb) AS value(
+        asset_id text,
+        captured_at timestamptz,
+        price double precision,
+        market_cap double precision,
+        volume_24h double precision,
+        change_1h double precision,
+        change_24h double precision,
+        baseline_volume double precision,
+        baseline_captured_at timestamptz,
+        volume_delta_24h double precision,
+        absolute_volume_delta double precision,
+        volume_signal_score double precision,
+        baseline_status text,
+        provider_updated_at timestamptz
+      )
+    )
+    UPDATE asset_metrics AS metric
+    SET
+      price = input.price,
+      market_cap = input.market_cap,
+      volume_24h = input.volume_24h,
+      change_1h = input.change_1h,
+      change_24h = input.change_24h,
+      baseline_volume = input.baseline_volume,
+      baseline_captured_at = input.baseline_captured_at,
+      volume_delta_24h = input.volume_delta_24h,
+      absolute_volume_delta = input.absolute_volume_delta,
+      volume_signal_score = input.volume_signal_score,
+      baseline_status = input.baseline_status::"VolumeBaselineStatus",
+      provider_updated_at = input.provider_updated_at
+    FROM input
+    WHERE metric.asset_id = input.asset_id
+      AND metric.captured_at = input.captured_at
+  `);
 }
 
 export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSnapshot, existingContext?: ScanContext) {
@@ -205,9 +431,17 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
     .map((coin) => coin.providerId);
   const eligibleCoins = snapshot.coins.filter((coin) => !isStablecoinIdentity(coin));
   if (eligibleCoins.length === 0) throw new Error("Refusing to persist a stablecoin-only market snapshot");
+  const providerUpdatedAtById = new Map<string, Date>();
+  for (const coin of eligibleCoins) {
+    const providerUpdatedAt = new Date(coin.updatedAt);
+    if (Number.isNaN(providerUpdatedAt.getTime())) throw new Error(`Invalid provider timestamp for ${coin.providerId}`);
+    providerUpdatedAtById.set(coin.providerId, providerUpdatedAt);
+  }
   const context = existingContext ?? (await startScanJob(prisma));
+  const persistenceStartedAt = Date.now();
 
   try {
+    const databaseStartedAt = Date.now();
     const payload = await prisma.$transaction(
       async (tx) => {
         const config = getRuntimeConfig();
@@ -215,8 +449,6 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
         const retentionUntil = new Date(capturedAt.getTime() + config.candidateRetentionHours * 60 * 60_000);
         const toleranceMs = config.volumeBaselineToleranceMinutes * 60_000;
         const staleAfterMs = config.scanStaleMinutes * 60_000;
-        const storedAssets = [];
-
         await tx.asset.updateMany({
           where: { OR: [{ trackedUntil: { lt: capturedAt } }, { trackedUntil: null }] },
           data: { isActive: false }
@@ -229,121 +461,48 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
           }
         });
 
-        for (const coin of eligibleCoins) {
-          const providerUpdatedAt = new Date(coin.updatedAt);
-          if (Number.isNaN(providerUpdatedAt.getTime())) throw new Error(`Invalid provider timestamp for ${coin.providerId}`);
-
-          const stored = await tx.asset.upsert({
-            where: { providerId: coin.providerId },
-            update: {
-              symbol: coin.symbol,
-              name: coin.name,
-              imageUrl: coin.imageUrl || null,
-              isActive: true,
-              rank: coin.rank,
-              currentMarketCap: coin.currentMarketCap,
-              currentVolume: coin.currentVolume,
-              lastPrice: coin.lastPrice,
-              candidateLastSeenAt: coin.isCandidate ? capturedAt : undefined,
-              trackedUntil: coin.isCandidate ? retentionUntil : undefined,
-              sparkline: coin.sparkline
-            },
-            create: {
-              providerId: coin.providerId,
-              symbol: coin.symbol,
-              name: coin.name,
-              imageUrl: coin.imageUrl || null,
-              isActive: true,
-              rank: coin.rank,
-              currentMarketCap: coin.currentMarketCap,
-              currentVolume: coin.currentVolume,
-              lastPrice: coin.lastPrice,
-              candidateLastSeenAt: coin.isCandidate ? capturedAt : null,
-              trackedUntil: coin.isCandidate ? retentionUntil : capturedAt,
-              sparkline: coin.sparkline
-            }
-          });
-          storedAssets.push({ stored, coin, providerUpdatedAt });
-        }
-
-        const storedAssetIds = storedAssets.map(({ stored }) => stored.id);
-        const baselineTarget = capturedAt.getTime() - 24 * 60 * 60_000;
-        const baselineCandidates = storedAssetIds.length
-          ? await tx.assetMetric.findMany({
-              where: {
-                assetId: { in: storedAssetIds },
-                capturedAt: {
-                  gte: new Date(baselineTarget - toleranceMs),
-                  lte: new Date(baselineTarget + toleranceMs)
-                }
-              },
-              select: { assetId: true, capturedAt: true, volume24h: true }
-            })
-          : [];
-        const baselineByAssetId = new Map<string, (typeof baselineCandidates)[number]>();
-        for (const candidate of baselineCandidates) {
-          const existing = baselineByAssetId.get(candidate.assetId);
-          if (
-            !existing ||
-            Math.abs(candidate.capturedAt.getTime() - baselineTarget) <
-              Math.abs(existing.capturedAt.getTime() - baselineTarget)
-          ) {
-            baselineByAssetId.set(candidate.assetId, candidate);
-          }
-        }
-        const firstMetrics = storedAssetIds.length
-          ? await tx.assetMetric.groupBy({
-              by: ["assetId"],
-              where: { assetId: { in: storedAssetIds } },
-              _min: { capturedAt: true }
-            })
-          : [];
-        const firstCapturedAtByAssetId = new Map(
-          firstMetrics.map((metric) => [metric.assetId, metric._min.capturedAt])
+        const storedAssets = await bulkUpsertAssets(tx, eligibleCoins, capturedAt, retentionUntil);
+        const storedByProviderId = new Map(storedAssets.map((asset) => [asset.providerId, asset]));
+        const baselineTarget = new Date(capturedAt.getTime() - 24 * 60 * 60_000);
+        const baselineLookups = await loadBaselineLookups(
+          tx,
+          storedAssets.map((asset) => asset.id),
+          baselineTarget,
+          toleranceMs
         );
+        const baselineByAssetId = new Map(baselineLookups.map((lookup) => [lookup.assetId, lookup]));
+        const metricWrites: MetricWrite[] = [];
 
-        for (const { stored, coin, providerUpdatedAt } of storedAssets) {
+        for (const coin of eligibleCoins) {
+          const stored = storedByProviderId.get(coin.providerId);
+          const providerUpdatedAt = providerUpdatedAtById.get(coin.providerId);
+          if (!stored || !providerUpdatedAt) throw new Error(`Persisted asset mapping is missing for ${coin.providerId}`);
           const baseline = baselineByAssetId.get(stored.id);
           const baselineStatus = resolveBaselineStatus({
             capturedAt,
             providerUpdatedAt,
-            firstCapturedAt: firstCapturedAtByAssetId.get(stored.id),
-            baselineCapturedAt: baseline?.capturedAt,
+            firstCapturedAt: baseline?.firstCapturedAt,
+            baselineCapturedAt: baseline?.baselineCapturedAt,
             toleranceMs,
             staleAfterMs
           });
           const signals =
             baselineStatus === "ready"
-              ? computeVolumeSignal(coin.currentVolume, baseline?.volume24h)
+              ? computeVolumeSignal(coin.currentVolume, baseline?.baselineVolume)
               : computeVolumeSignal(coin.currentVolume, null);
-          await tx.assetMetric.upsert({
-            where: { assetId_capturedAt: { assetId: stored.id, capturedAt } },
-            update: {
-              price: coin.lastPrice,
-              marketCap: coin.currentMarketCap,
-              volume24h: coin.currentVolume,
-              change1h: coin.change1h,
-              change24h: coin.change24h,
-              baselineVolume: baselineStatus === "ready" ? baseline?.volume24h : null,
-              baselineCapturedAt: baselineStatus === "ready" ? baseline?.capturedAt : null,
-              ...signals,
-              baselineStatus,
-              providerUpdatedAt
-            },
-            create: {
-              assetId: stored.id,
-              capturedAt,
-              price: coin.lastPrice,
-              marketCap: coin.currentMarketCap,
-              volume24h: coin.currentVolume,
-              change1h: coin.change1h,
-              change24h: coin.change24h,
-              baselineVolume: baselineStatus === "ready" ? baseline?.volume24h : null,
-              baselineCapturedAt: baselineStatus === "ready" ? baseline?.capturedAt : null,
-              ...signals,
-              baselineStatus,
-              providerUpdatedAt
-            }
+          metricWrites.push({
+            assetId: stored.id,
+            capturedAt,
+            price: coin.lastPrice,
+            marketCap: coin.currentMarketCap,
+            volume24h: coin.currentVolume,
+            change1h: coin.change1h,
+            change24h: coin.change24h,
+            baselineVolume: baselineStatus === "ready" ? baseline?.baselineVolume ?? null : null,
+            baselineCapturedAt: baselineStatus === "ready" ? baseline?.baselineCapturedAt ?? null : null,
+            ...signals,
+            baselineStatus,
+            providerUpdatedAt
           });
         }
 
@@ -354,53 +513,52 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
                 isActive: true,
                 trackedUntil: { gte: capturedAt }
               },
-              include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
+              select: {
+                id: true,
+                metrics: {
+                  orderBy: { capturedAt: "desc" },
+                  take: 1,
+                  select: {
+                    price: true,
+                    marketCap: true,
+                    volume24h: true,
+                    change1h: true,
+                    change24h: true,
+                    providerUpdatedAt: true
+                  }
+                }
+              }
             })
           : [];
         for (const asset of staleAssets) {
           const latestMetric = asset.metrics[0];
           if (!latestMetric) continue;
-          await tx.assetMetric.upsert({
-            where: { assetId_capturedAt: { assetId: asset.id, capturedAt } },
-            update: {
-              price: latestMetric.price,
-              marketCap: latestMetric.marketCap,
-              volume24h: latestMetric.volume24h,
-              change1h: latestMetric.change1h,
-              change24h: latestMetric.change24h,
-              baselineVolume: null,
-              baselineCapturedAt: null,
-              volumeDelta24h: null,
-              absoluteVolumeDelta: null,
-              volumeSignalScore: null,
-              baselineStatus: "stale",
-              providerUpdatedAt: latestMetric.providerUpdatedAt
-            },
-            create: {
-              assetId: asset.id,
-              capturedAt,
-              price: latestMetric.price,
-              marketCap: latestMetric.marketCap,
-              volume24h: latestMetric.volume24h,
-              change1h: latestMetric.change1h,
-              change24h: latestMetric.change24h,
-              baselineVolume: null,
-              baselineCapturedAt: null,
-              volumeDelta24h: null,
-              absoluteVolumeDelta: null,
-              volumeSignalScore: null,
-              baselineStatus: "stale",
-              providerUpdatedAt: latestMetric.providerUpdatedAt
-            }
+          metricWrites.push({
+            assetId: asset.id,
+            capturedAt,
+            price: latestMetric.price,
+            marketCap: latestMetric.marketCap,
+            volume24h: latestMetric.volume24h,
+            change1h: latestMetric.change1h,
+            change24h: latestMetric.change24h,
+            baselineVolume: null,
+            baselineCapturedAt: null,
+            volumeDelta24h: null,
+            absoluteVolumeDelta: null,
+            volumeSignalScore: null,
+            baselineStatus: "stale",
+            providerUpdatedAt: latestMetric.providerUpdatedAt
           });
         }
+
+        await bulkUpsertMetrics(tx, metricWrites);
 
         const activeAssetRecords = await tx.asset.findMany({
           where: { isActive: true, trackedUntil: { gte: capturedAt } },
           orderBy: { currentVolume: "desc" },
-          include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
+          select: dashboardAssetSelect
         });
-        const persistedAssets = activeAssetRecords.map(mapAssetRecord);
+        const persistedAssets: DashboardAsset[] = activeAssetRecords.map(mapDashboardAssetRecord);
         const finishedAt = new Date();
         const latestScan: ScanJob = {
           id: context.id,
@@ -411,16 +569,18 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
           processedCount: persistedAssets.length,
           errorMessage: null
         };
-        const dashboard = createDashboardPayload(persistedAssets, latestScan, capturedAt.toISOString());
+        const dashboard = createDashboardSnapshot(persistedAssets, latestScan, capturedAt.toISOString());
 
         await tx.scanJob.update({
           where: { id: context.id },
-          data: { status: "success", finishedAt, processedCount: persistedAssets.length, errorMessage: null }
+          data: { status: "success", finishedAt, processedCount: persistedAssets.length, errorMessage: null },
+          select: { id: true }
         });
         await tx.cacheSnapshot.upsert({
           where: { snapshotType: "dashboard" },
           update: { payload: toJson(dashboard), refreshedAt: capturedAt },
-          create: { snapshotType: "dashboard", payload: toJson(dashboard), refreshedAt: capturedAt }
+          create: { snapshotType: "dashboard", payload: toJson(dashboard), refreshedAt: capturedAt },
+          select: { id: true }
         });
         const retentionCutoff = new Date(Date.now() - getRuntimeConfig().metricRetentionDays * 24 * 60 * 60_000);
         await tx.assetMetric.deleteMany({ where: { capturedAt: { lt: retentionCutoff } } });
@@ -429,8 +589,20 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
       { maxWait: 10_000, timeout: 120_000 }
     );
 
+    const databaseMs = Date.now() - databaseStartedAt;
+    const cacheStartedAt = Date.now();
     await writeDashboardCache(payload);
-    return { assets: payload.coins.length, payload };
+    const cacheMs = Date.now() - cacheStartedAt;
+    return {
+      assets: payload.latestScan.processedCount,
+      payload,
+      timings: {
+        databaseMs,
+        cacheMs,
+        persistenceMs: Date.now() - persistenceStartedAt,
+        cacheBytes: Buffer.byteLength(JSON.stringify(payload))
+      }
+    };
   } catch (error) {
     if (!existingContext) await failScanJob(prisma, context, error);
     throw error;

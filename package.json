@@ -15,7 +15,7 @@
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:integration": "SONITUS_DATA_MODE=mock tsx scripts/integration-check.ts",
+    "test:integration": "tsx scripts/integration-check.ts",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "check:netlify": "npx --yes netlify-cli@26.2.0 build --offline && node scripts/verify-netlify-build.mjs",
     "db:generate": "prisma generate",

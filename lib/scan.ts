@@ -33,6 +33,7 @@ function buildMockLiveSnapshot(): LiveSnapshot {
 }
 
 export async function runMarketSnapshotOnce() {
+  const totalStartedAt = Date.now();
   const prisma = getPrismaClient();
   if (!prisma) {
     if (getDataMode() !== "mock") throw new ConfigurationError("Database mode requires a database connection.");
@@ -55,6 +56,7 @@ export async function runMarketSnapshotOnce() {
             }
           })
         : [];
+    const providerStartedAt = Date.now();
     const snapshot =
       getDataMode() === "mock"
         ? buildMockLiveSnapshot()
@@ -64,8 +66,27 @@ export async function runMarketSnapshotOnce() {
               imageUrl: asset.imageUrl ?? ""
             }))
           );
+    const providerMs = Date.now() - providerStartedAt;
     const result = await persistLiveSnapshot(prisma, snapshot, scan);
-    return { updatedAt: snapshot.updatedAt, job: result.payload.latestScan };
+    const totalMs = Date.now() - totalStartedAt;
+    logger.info(
+      {
+        scanId: result.payload.latestScan.id,
+        processedCount: result.payload.latestScan.processedCount,
+        providerMs,
+        databaseMs: result.timings.databaseMs,
+        cacheMs: result.timings.cacheMs,
+        persistenceMs: result.timings.persistenceMs,
+        totalMs,
+        cacheBytes: result.timings.cacheBytes
+      },
+      "Market snapshot timing"
+    );
+    return {
+      updatedAt: snapshot.updatedAt,
+      job: result.payload.latestScan,
+      timings: { ...result.timings, providerMs, totalMs }
+    };
   } catch (error) {
     if (scan) await failScanJob(prisma, scan, error);
     throw error;

@@ -5,7 +5,7 @@ import { VolumeMarketCapPanel } from "@/components/volume-market-cap-panel";
 import { VolumeSignalPanel } from "@/components/volume-signal-panel";
 import { VolatilityPanel } from "@/components/volatility-panel";
 import { formatCompactCurrency, formatPercent, formatSignedPercent } from "@/lib/format";
-import { loadDashboardPayload, parseDashboardFilters } from "@/lib/dashboard";
+import { loadDashboardViewPayload, parseDashboardFilters } from "@/lib/dashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +16,7 @@ type PageProps = {
 export default async function DashboardPage({ searchParams }: PageProps) {
   const resolvedSearchParams = await searchParams;
   const filters = parseDashboardFilters(resolvedSearchParams);
-  const payload = await loadDashboardPayload(filters);
+  const payload = await loadDashboardViewPayload(filters);
 
   return (
     <div className="space-y-3">

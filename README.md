@@ -34,6 +34,8 @@ flowchart LR
 
 Frontend dış veri sağlayıcısına doğrudan istek atmaz. Ingestion başarısız olduğunda son başarılı PostgreSQL/cache snapshot'ı korunur; production ortamında hata hiçbir zaman demo veriyle gizlenmez.
 
+Ingestion, asset ve metric kayıtlarını toplu PostgreSQL işlemleriyle yazar. Redis/PostgreSQL dashboard snapshot'ı liste ekranında kullanılmayan sparkline verisini ve yinelenen panel kayıtlarını içermez; detay endpoint'i sparkline'ı tek asset için, koleksiyon API'leri ise geriye uyumluluk gerektiğinde tek toplu sorguyla hydrate eder.
+
 ## Netlify'a yayınlama
 
 Netlify, Next.js web/API katmanını OpenNext adaptörüyle çalıştırır. Bu repository ayrıca Netlify üzerinde her 10 dakikada tetiklenen Scheduled Function ve ağır ingestion işini en fazla 15 dakika çalışabilen Background Function içerir. Bu nedenle Netlify deploy'unda ayrı bir BullMQ worker servisi zorunlu değildir; Docker/Render/Fly dağıtımlarında BullMQ worker kullanılmaya devam eder.
@@ -184,6 +186,8 @@ npm run db:deploy
 `prisma migrate dev` yalnızca geliştirme içindir. Seed komutu demo snapshot yazar ve mevcut tabloları temizleyebildiği için production veritabanında çalıştırılmamalıdır.
 
 BullMQ Job Scheduler tek bir periyodik schedule kaydı kullanır. Netlify deploy'unda bunun yerine Scheduled Function, Background Function'ı çağırır. Her iki yolda da sağlayıcı hatası `scan_jobs` tablosuna `failed` olarak yazılır, başarılı son cache korunur ve snapshot yazımı idempotenttir.
+
+Başarılı ingestion logları `providerMs`, `databaseMs`, `cacheMs`, `persistenceMs`, `totalMs` ve `cacheBytes` alanlarını içerir. Bu alanlar Netlify function süresi ile dashboard snapshot boyutunun deploy sonrasında izlenmesi için kullanılır.
 
 ## Production çıkış kontrolü
 

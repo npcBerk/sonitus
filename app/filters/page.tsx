@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { FilterBar } from "@/components/filter-bar";
 import { MetricCard } from "@/components/metric-card";
-import { loadDashboardPayload, parseDashboardFilters } from "@/lib/dashboard";
+import { loadDashboardViewPayload, parseDashboardFilters } from "@/lib/dashboard";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,7 @@ type PageProps = {
 export default async function FiltersPage({ searchParams }: PageProps) {
   const resolvedSearchParams = await searchParams;
   const filters = parseDashboardFilters(resolvedSearchParams);
-  const payload = await loadDashboardPayload(filters);
+  const payload = await loadDashboardViewPayload(filters);
 
   const examples = [
     { label: "Strongest volume shocks", href: "/?sort=signal" },

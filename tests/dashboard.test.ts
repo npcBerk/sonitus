@@ -3,7 +3,17 @@ import test from "node:test";
 
 import { getVisibleAssets, shouldShowAssetsToggle, sortAssets } from "../components/assets-table";
 import { getRuntimeConfig } from "../lib/config";
-import { createDashboardPayload, filterAssets, parseDashboardFilters, validateDashboardFilters } from "../lib/dashboard";
+import {
+  createDashboardPayload,
+  createDashboardSnapshot,
+  expandDashboardSnapshot,
+  filterAssets,
+  getDashboardPayload,
+  hydrateDashboardPayload,
+  parseDashboardFilters,
+  parseDashboardSnapshot,
+  validateDashboardFilters
+} from "../lib/dashboard";
 import { formatDetailedPrice } from "../lib/format";
 import type { Asset, ScanJob } from "../lib/types";
 
@@ -56,6 +66,49 @@ test("dashboard calculations never emit Infinity for zero market cap", () => {
   assert.equal(payload.summary.averageVolMcap, 0);
   assert.deepEqual(payload.highVolMcap, []);
   assert.doesNotThrow(() => JSON.stringify(payload));
+});
+
+test("dashboard snapshots omit sparklines and deduplicate panel assets by id", () => {
+  const eligibleAsset = { ...asset, currentMarketCap: 30_000_000, currentVolume: 10_000_000 };
+  const snapshot = createDashboardSnapshot([eligibleAsset], scan, now);
+  assert.equal("sparkline" in snapshot.coins[0], false);
+  assert.equal(snapshot.topVolumeAssetId, eligibleAsset.id);
+  assert.equal(JSON.stringify(snapshot).includes("sparkline"), false);
+
+  const expanded = expandDashboardSnapshot(snapshot);
+  assert.equal(expanded.topVolumeAsset?.id, eligibleAsset.id);
+  assert.equal(expanded.coins[0], expanded.topVolumeAsset);
+});
+
+test("legacy dashboard payloads are converted to v2 snapshots", () => {
+  const eligibleAsset = { ...asset, currentMarketCap: 30_000_000, currentVolume: 10_000_000 };
+  const legacy = createDashboardPayload([eligibleAsset], scan, now);
+  const snapshot = parseDashboardSnapshot(legacy);
+  assert.equal(snapshot?.version, 2);
+  assert.equal(snapshot?.coins[0].id, asset.id);
+  assert.equal(snapshot ? "sparkline" in snapshot.coins[0] : true, false);
+});
+
+test("public dashboard hydration preserves the full asset contract", async () => {
+  const previousMode = process.env.SONITUS_DATA_MODE;
+  process.env.SONITUS_DATA_MODE = "mock";
+  const legacy = getDashboardPayload();
+  const snapshot = createDashboardSnapshot(
+    legacy.coins.map(({ sparkline: _sparkline, ...summary }) => {
+      void _sparkline;
+      return summary;
+    }),
+    legacy.latestScan,
+    legacy.updatedAt
+  );
+  try {
+    const hydrated = await hydrateDashboardPayload(expandDashboardSnapshot(snapshot));
+    assert.ok(hydrated.coins.length > 0);
+    assert.ok(hydrated.coins.every((item) => Array.isArray(item.sparkline) && item.sparkline.length > 0));
+  } finally {
+    if (previousMode === undefined) delete process.env.SONITUS_DATA_MODE;
+    else process.env.SONITUS_DATA_MODE = previousMode;
+  }
 });
 
 test("filters combine search and market constraints", () => {

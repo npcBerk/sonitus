@@ -3,14 +3,16 @@ import { randomUUID } from "node:crypto";
 
 import { getRuntimeConfig } from "./config";
 import { logger } from "./logger";
-import type { DashboardPayload } from "./types";
+import type { DashboardSnapshot, SnapshotStatus } from "./types";
 
 declare global {
   var __sonitusRedis: IORedis | undefined;
   var __sonitusRedisConnectPromise: Promise<void> | undefined;
 }
 
-const DASHBOARD_CACHE_KEY = "sonitus:dashboard:v1";
+const DASHBOARD_CACHE_KEY = "sonitus:dashboard:v2";
+const LEGACY_DASHBOARD_CACHE_KEY = "sonitus:dashboard:v1";
+const SNAPSHOT_STATUS_CACHE_KEY = "sonitus:snapshot-status:v1";
 const MARKET_SCAN_LOCK_KEY = "sonitus:market-scan:lock:v1";
 
 export function getRedisClient() {
@@ -88,24 +90,48 @@ export async function readDashboardCache() {
 
   try {
     await ensureConnected(client);
-    return await client.get(DASHBOARD_CACHE_KEY);
+    const current = await client.get(DASHBOARD_CACHE_KEY);
+    return current ?? await client.get(LEGACY_DASHBOARD_CACHE_KEY);
   } catch (error) {
     logger.warn({ err: error }, "Redis dashboard cache read failed");
     return null;
   }
 }
 
-export async function writeDashboardCache(payload: DashboardPayload) {
+export async function writeDashboardCache(payload: DashboardSnapshot) {
   const client = getRedisClient();
   if (!client) return false;
 
   try {
     await ensureConnected(client);
-    await client.set(DASHBOARD_CACHE_KEY, JSON.stringify(payload), "EX", getRuntimeConfig().cacheTtlSeconds);
+    const ttl = getRuntimeConfig().cacheTtlSeconds;
+    const status: SnapshotStatus = {
+      version: 1,
+      updatedAt: payload.updatedAt,
+      latestScan: payload.latestScan
+    };
+    await client
+      .multi()
+      .set(DASHBOARD_CACHE_KEY, JSON.stringify(payload), "EX", ttl)
+      .set(SNAPSHOT_STATUS_CACHE_KEY, JSON.stringify(status), "EX", ttl)
+      .exec();
     return true;
   } catch (error) {
     logger.warn({ err: error }, "Redis dashboard cache write failed");
     return false;
+  }
+}
+
+export async function readSnapshotStatusCache() {
+  const client = getRedisClient();
+  if (!client) return null;
+
+  try {
+    await ensureConnected(client);
+    return await client.get(SNAPSHOT_STATUS_CACHE_KEY);
+  } catch (error) {
+    logger.warn({ err: error }, "Redis snapshot status cache read failed");
+    return null;
   }
 }
 

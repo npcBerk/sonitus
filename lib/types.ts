@@ -1,6 +1,6 @@
 export type VolumeBaselineStatus = "warming_up" | "ready" | "missing" | "stale";
 
-export type Asset = {
+export type DashboardAsset = {
   id: string;
   providerId: string;
   symbol: string;
@@ -19,8 +19,11 @@ export type Asset = {
   baselineStatus: VolumeBaselineStatus;
   candidateLastSeenAt: string | null;
   trackedUntil: string | null;
-  sparkline: number[];
   updatedAt: string;
+};
+
+export type Asset = DashboardAsset & {
+  sparkline: number[];
 };
 
 export type ScanJob = {
@@ -43,16 +46,39 @@ export type DashboardSummary = {
   baselineReadyPercent: number;
 };
 
-export type DashboardPayload = {
+export type DashboardData<TAsset extends DashboardAsset> = {
   ok: true;
   updatedAt: string;
   summary: DashboardSummary;
-  coins: Asset[];
-  topVolumeAsset: Asset | null;
-  risingVolume: Asset[];
-  highVolMcap: Asset[];
-  volatileAssets: Asset[];
-  fallingVolume: Asset[];
+  coins: TAsset[];
+  topVolumeAsset: TAsset | null;
+  risingVolume: TAsset[];
+  highVolMcap: TAsset[];
+  volatileAssets: TAsset[];
+  fallingVolume: TAsset[];
+  latestScan: ScanJob;
+};
+
+export type DashboardViewPayload = DashboardData<DashboardAsset>;
+export type DashboardPayload = DashboardData<Asset>;
+
+export type DashboardSnapshot = {
+  version: 2;
+  ok: true;
+  updatedAt: string;
+  summary: DashboardSummary;
+  coins: DashboardAsset[];
+  topVolumeAssetId: string | null;
+  risingVolumeIds: string[];
+  highVolMcapIds: string[];
+  volatileAssetIds: string[];
+  fallingVolumeIds: string[];
+  latestScan: ScanJob;
+};
+
+export type SnapshotStatus = {
+  version: 1;
+  updatedAt: string;
   latestScan: ScanJob;
 };
 

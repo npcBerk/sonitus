@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { formatCompactCurrency, formatDetailedPrice, formatSignedPercent } from "@/lib/format";
-import type { Asset, VolumeBaselineStatus } from "@/lib/types";
+import type { DashboardAsset, VolumeBaselineStatus } from "@/lib/types";
 
 type AssetsTableProps = {
-  assets: Asset[];
+  assets: DashboardAsset[];
 };
 
 export const INITIAL_VISIBLE_ASSET_COUNT = 25;
@@ -25,7 +25,7 @@ export type AssetSortKey =
   | "volMcap";
 export type SortDirection = "asc" | "desc";
 
-export function getVisibleAssets(assets: Asset[], showAll: boolean) {
+export function getVisibleAssets(assets: DashboardAsset[], showAll: boolean) {
   return showAll ? assets : assets.slice(0, INITIAL_VISIBLE_ASSET_COUNT);
 }
 
@@ -33,7 +33,7 @@ export function shouldShowAssetsToggle(assetCount: number) {
   return assetCount > INITIAL_VISIBLE_ASSET_COUNT;
 }
 
-function volumeMarketCapRatio(asset: Asset) {
+function volumeMarketCapRatio(asset: DashboardAsset) {
   return asset.currentMarketCap > 0 ? asset.currentVolume / asset.currentMarketCap : 0;
 }
 
@@ -42,7 +42,7 @@ function nullableValue(value: number | null, direction: SortDirection) {
   return direction === "asc" ? Number.MAX_VALUE : -Number.MAX_VALUE;
 }
 
-export function sortAssets(assets: Asset[], sortKey: AssetSortKey, direction: SortDirection) {
+export function sortAssets(assets: DashboardAsset[], sortKey: AssetSortKey, direction: SortDirection) {
   const multiplier = direction === "asc" ? 1 : -1;
 
   return [...assets].sort((left, right) => {

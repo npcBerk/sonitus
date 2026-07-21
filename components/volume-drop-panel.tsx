@@ -1,10 +1,10 @@
 import Link from "next/link";
 
 import { formatSignedPercent } from "@/lib/format";
-import type { Asset } from "@/lib/types";
+import type { DashboardAsset } from "@/lib/types";
 
 type VolumeDropPanelProps = {
-  assets: Asset[];
+  assets: DashboardAsset[];
 };
 
 export function VolumeDropPanel({ assets }: VolumeDropPanelProps) {
