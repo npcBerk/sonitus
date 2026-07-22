@@ -5,6 +5,8 @@ node_modules
 .env.local
 .env.development
 .env.production
+deploy/.env.production
+deploy/backups/
 *.log
 *.tsbuildinfo
 outputs/

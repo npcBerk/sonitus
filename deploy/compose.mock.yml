@@ -1,0 +1,107 @@
+name: sonitus-mock-vps
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sonitus
+      POSTGRES_PASSWORD: sonitus-mock-only
+      POSTGRES_DB: sonitus
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonitus -d sonitus"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+
+  migrate:
+    build:
+      context: ..
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://sonitus:sonitus-mock-only@postgres:5432/sonitus?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+    networks: [backend]
+
+  seed:
+    build:
+      context: ..
+      target: worker
+    command: ["npm", "run", "db:seed"]
+    environment:
+      DATABASE_URL: postgresql://sonitus:sonitus-mock-only@postgres:5432/sonitus?schema=public
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    logging: *default-logging
+    networks: [backend]
+
+  web:
+    build:
+      context: ..
+      target: web
+    environment:
+      NODE_ENV: production
+      SONITUS_DATA_MODE: database
+      DATABASE_URL: postgresql://sonitus:sonitus-mock-only@postgres:5432/sonitus?schema=public
+      REDIS_URL: redis://redis:6379
+      SCAN_STALE_MINUTES: "10080"
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [frontend, backend]
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile.mock:/etc/caddy/Caddyfile:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [frontend]
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  frontend:
+  backend:
+    internal: true

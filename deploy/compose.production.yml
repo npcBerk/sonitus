@@ -1,0 +1,153 @@
+name: sonitus
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app-environment: &app-environment
+  NODE_ENV: production
+  SONITUS_DATA_MODE: database
+  DATABASE_URL: postgresql://sonitus:${POSTGRES_PASSWORD}@postgres:5432/sonitus?schema=public
+  REDIS_URL: redis://redis:6379
+  INTERNAL_JOB_TOKEN: ${INTERNAL_JOB_TOKEN}
+  SCAN_INTERVAL_MINUTES: ${SCAN_INTERVAL_MINUTES:-5}
+  SCAN_STALE_MINUTES: ${SCAN_STALE_MINUTES:-15}
+  SCAN_LOCK_SECONDS: ${SCAN_LOCK_SECONDS:-1200}
+  METRIC_RETENTION_DAYS: ${METRIC_RETENTION_DAYS:-30}
+  VOLUME_BASELINE_TOLERANCE_MINUTES: ${VOLUME_BASELINE_TOLERANCE_MINUTES:-90}
+  CANDIDATE_RETENTION_HOURS: ${CANDIDATE_RETENTION_HOURS:-48}
+  MIN_MARKET_CAP_USD: ${MIN_MARKET_CAP_USD:-25000000}
+  MIN_VOLUME_USD: ${MIN_VOLUME_USD:-5000000}
+  CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-900}
+  COINGECKO_API_MODE: ${COINGECKO_API_MODE}
+  COINGECKO_API_KEY: ${COINGECKO_API_KEY}
+  COINGECKO_SCAN_LIMIT: ${COINGECKO_SCAN_LIMIT:-250}
+  COINGECKO_CONCURRENCY: ${COINGECKO_CONCURRENCY:-4}
+  COINGECKO_TIMEOUT_MS: ${COINGECKO_TIMEOUT_MS:-10000}
+  COINGECKO_MAX_RETRIES: ${COINGECKO_MAX_RETRIES:-3}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sonitus
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: sonitus
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonitus -d sonitus"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+
+  migrate:
+    build:
+      context: ..
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://sonitus:${POSTGRES_PASSWORD}@postgres:5432/sonitus?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+    networks: [backend]
+
+  web:
+    build:
+      context: ..
+      target: web
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [frontend, backend]
+
+  worker:
+    build:
+      context: ..
+      target: worker
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+
+  backup:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/usr/local/bin/backup-postgres.sh"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: sonitus
+      POSTGRES_USER: sonitus
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backup-postgres.sh:/usr/local/bin/backup-postgres.sh:ro
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [backend]
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [frontend]
+
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  frontend:
+  backend:
+    internal: true
