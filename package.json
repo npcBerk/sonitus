@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build && node scripts/prepare-standalone.mjs",
-    "build:netlify": "next build",
     "start": "node .next/standalone/server.js",
     "postinstall": "prisma generate",
     "preflight:production": "node scripts/production-preflight.mjs",
@@ -17,7 +16,6 @@
     "test": "tsx --test tests/*.test.ts",
     "test:integration": "tsx scripts/integration-check.ts",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
-    "check:netlify": "npx --yes netlify-cli@26.2.0 build --offline && node scripts/verify-netlify-build.mjs",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
@@ -35,11 +33,11 @@
     "postcss": "^8.5.19",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "sharp": "^0.35.3",
     "tailwindcss": "^3.4.17",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@netlify/functions": "^5.3.0",
     "@types/node": "^22.15.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -50,6 +48,7 @@
     "typescript": "^5.8.3"
   },
   "overrides": {
+    "sharp": "$sharp",
     "next": {
       "postcss": "$postcss"
     }

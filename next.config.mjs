@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: process.env.NETLIFY === "true" ? undefined : "standalone",
+  output: "standalone",
   poweredByHeader: false,
   compress: true,
   async headers() {

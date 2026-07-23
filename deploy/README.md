@@ -1,9 +1,14 @@
 # SONITUS tam VPS çalıştırma rehberi
 
-Bu klasörde iki ayrı düzen vardır:
+Bu klasörde iki ayrı ve bilinçli çalışma düzeni vardır:
 
 - `compose.mock.yml`: VPS topolojisinin yerel provasıdır. Caddy, Next.js, PostgreSQL ve Redis çalışır; PostgreSQL sahte snapshot ile doldurulur. Worker çalışmaz ve CoinGecko'ya istek atılmaz.
 - `compose.production.yml`: Gerçek VPS düzenidir. Bunlara ek olarak sürekli BullMQ worker, otomatik PostgreSQL backup ve Caddy'nin otomatik HTTPS yönetimi çalışır.
+
+Kökteki `.env.example`, Docker için değil host üzerinde `npm run dev` çalıştırmak
+içindir. Production Compose yalnızca `deploy/.env.production` dosyasını
+`--env-file` ile alır. Mock Compose gerekli değerleri kendi içinde güvenli yerel
+değerlerle tanımlar ve env dosyası istemez.
 
 ## Docker'ın kısa mantığı
 
@@ -45,6 +50,103 @@ Docker Engine ve Compose eklentisini Docker'ın resmi Ubuntu deposundan kurun. D
 
 Kod için örneğin `/opt/sonitus` dizinini kullanın. Repository'yi bu dizine alın ve `deploy` altından çalıştırın.
 
+### Seçenek A: Kök domain'i doğrudan VPS'e bağlama
+
+Örnek: `example.com` adresinin tamamı SONITUS'a açılacaksa:
+
+1. VPS'in public IPv4 adresini öğrenin:
+
+   ```bash
+   curl -4 https://icanhazip.com
+   ```
+
+2. Squarespace'te **Domains → example.com → DNS → DNS Settings → Custom
+   Records** ekranını açın.
+3. `Name/Host` değeri `@` olan ve eski web sitesine giden `A`, `AAAA` veya
+   `ALIAS` kayıtlarını kaldırın. **MX, TXT, DKIM ve e-posta kayıtlarını
+   silmeyin.** Kök domain hâlihazırda bir Squarespace sitesini gösteriyorsa bu
+   işlem o siteyi bu domain'den ayırır.
+4. Şu kaydı ekleyin:
+
+   | Type | Name | IP Address |
+   | --- | --- | --- |
+   | `A` | `@` | `VPS_PUBLIC_IPV4` |
+
+5. VPS'in gerçekten çalışan bir public IPv6 adresi varsa ayrıca `AAAA / @ /
+   VPS_PUBLIC_IPV6` ekleyebilirsiniz. IPv6 yapılandırılmadıysa `AAAA` eklemeyin
+   ve eski `@` AAAA kaydını bırakmayın.
+6. `deploy/.env.production` içinde şu değeri kullanın:
+
+   ```dotenv
+   DOMAIN=example.com
+   ```
+
+Bu kurulum yalnızca `https://example.com` adresini bağlar. `www.example.com`
+ayrıca kullanılacaksa onun için de DNS ve Caddy host yapılandırması yapılmalıdır;
+ilk kurulumda tek canonical adres kullanmak daha nettir.
+
+### Seçenek B: Subdomain'i VPS'e bağlama
+
+Örnek: Ana site `example.com` üzerinde kalacak, SONITUS
+`app.example.com` adresinde açılacaksa:
+
+1. Squarespace'te **Domains → example.com → DNS → DNS Settings → Custom
+   Records** ekranını açın.
+2. Şu kaydı ekleyin:
+
+   | Type | Name | IP Address |
+   | --- | --- | --- |
+   | `A` | `app` | `VPS_PUBLIC_IPV4` |
+
+3. Aynı `app` adıyla eski bir `A`, `AAAA`, `CNAME` veya forwarding kaydı varsa
+   önce çakışan kaydı kaldırın. Kök domain'in `@`, `www`, MX ve TXT kayıtlarına
+   dokunmayın.
+4. `deploy/.env.production` içinde tam subdomain'i kullanın:
+
+   ```dotenv
+   DOMAIN=app.example.com
+   ```
+
+Bu seçenek kök Squarespace sitesini ve domain e-postasını değiştirmez; ilk canlı
+deneme için önerilen yöntemdir.
+
+### DNS ve HTTPS doğrulaması
+
+DNS değişiklikleri çoğunlukla daha hızlı görünse de Squarespace'e göre 24–48
+saate kadar sürebilir. VPS'i açmadan önce kendi bilgisayarınızdan kontrol edin:
+
+```bash
+dig +short A example.com
+# veya:
+dig +short A app.example.com
+```
+
+Çıktı VPS IPv4 adresi olmalıdır. Sonra VPS firewall/security group üzerinde TCP
+`80` ve `443` portlarının açık olduğunu doğrulayın ve production Compose'u
+başlatın. Caddy domain'i gördüğünde public TLS sertifikasını otomatik alır,
+HTTP'yi HTTPS'e yönlendirir ve sertifikayı yeniler:
+
+```bash
+curl -I https://example.com
+# veya:
+curl -I https://app.example.com
+
+docker compose --env-file deploy/.env.production \
+  -f deploy/compose.production.yml logs --tail=100 caddy
+```
+
+DNS doğru IP'ye gitmiyorsa, `80/443` dışarıdan kapalıysa veya aynı isimde eski
+bir `AAAA` kaydı başka sunucuya gidiyorsa Caddy sertifika alamaz.
+
+Resmî referanslar: [Squarespace DNS kayıtlarını
+düzenleme](https://support.squarespace.com/hc/en-us/articles/360002101888-Adding-DNS-records-to-your-domain),
+[Squarespace web hosting A/AAAA
+kayıtları](https://support.squarespace.com/hc/en-us/articles/31119879125645-DNS-records-for-web-hosting),
+[Squarespace subdomain'i başka sunucuya
+yönlendirme](https://support.squarespace.com/hc/en-us/articles/215744668-Pointing-a-Squarespace-domain)
+ve [Caddy HTTPS
+başlangıç rehberi](https://caddyserver.com/docs/quick-starts/https).
+
 ## 3. Production secret dosyası
 
 ```bash
@@ -72,7 +174,11 @@ docker compose --env-file deploy/.env.production -f deploy/compose.production.ym
 docker compose --env-file deploy/.env.production -f deploy/compose.production.yml ps
 ```
 
-`migrate` container'ı Prisma migration'larını bir kez uygular. `web` standalone Next.js server'dır. `worker` sürekli açıktır ve BullMQ scheduler'ını kurar. Netlify fonksiyonları repository'de kalabilir ama VPS'te hiçbir process onları çalıştırmaz; ayrıca silmek gerekmez.
+`--env-file` verilmezse veya zorunlu production değerlerinden biri eksikse Compose
+artık container oluşturmadan hata verir. `migrate` container'ı Prisma
+migration'larını bir kez uygular. `web` standalone Next.js server'dır. `worker`
+production preflight kontrolünden sonra sürekli çalışır ve BullMQ scheduler'ını
+kurar.
 
 Kontroller:
 
@@ -125,7 +231,8 @@ Health endpoint tek başına sunucunun tamamen erişilemez olmasını içeriden 
 3. TLS, health, worker logu, ilk scan ve backup dosyasını doğrula.
 4. Backup restore provasını ayrı/test veritabanında yap.
 5. Ana domain DNS'ini VPS'e geçir.
-6. Netlify'daki scheduled/background function'ları kapat; iki scheduler'ı aynı anda bırakma.
+6. Eski Netlify scheduled/background function'larının kapalı olduğunu doğrula.
 7. 24-48 saat health, worker hataları, disk ve CoinGecko limitlerini izle.
 
-Netlify'ı DNS geçişi doğrulanana kadar geri dönüş seçeneği olarak tutabilirsiniz. Eski scheduler'ı, yeni worker'ın başarılı tarama yaptığını gördükten hemen sonra kapatın.
+Eski scheduler'ı, yeni worker'ın başarılı tarama yaptığını gördükten hemen sonra
+kapatın; iki scheduler'ı aynı anda çalıştırmayın.
