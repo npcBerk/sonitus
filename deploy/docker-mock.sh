@@ -2,11 +2,10 @@
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-project_dir=$(dirname "$script_dir")
 compose_file="$script_dir/compose.mock.yml"
 
 compose() {
-  docker compose --project-directory "$project_dir" -f "$compose_file" "$@"
+  docker compose -f "$compose_file" "$@"
 }
 
 usage() {

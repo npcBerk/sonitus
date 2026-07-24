@@ -2,7 +2,6 @@
 set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-project_dir=$(dirname "$script_dir")
 compose_file="$script_dir/compose.production.yml"
 env_file="${SONITUS_ENV_FILE:-$script_dir/.env.production}"
 
@@ -17,7 +16,6 @@ require_env_file() {
 compose() {
   require_env_file
   docker compose \
-    --project-directory "$project_dir" \
     --env-file "$env_file" \
     -f "$compose_file" \
     "$@"
