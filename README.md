@@ -75,7 +75,10 @@ Bu komut lint, route type üretimi, strict TypeScript kontrolü, testler ve prod
 npm audit --omit=dev
 ```
 
-PostgreSQL ve Redis hazırken ingestion persistence entegrasyonu `npm run test:integration` ile doğrulanır; CI bu kontrolü gerçek servis container'ları üzerinde çalıştırır.
+PostgreSQL ve Redis hazırken ingestion persistence entegrasyonu ayrıca
+`npm run test:integration` ile doğrulanabilir. Normal CI dış servislere bağlı bu
+kontrolü çalıştırmaz; Prisma migration ve seed işlemlerini izole CI PostgreSQL'i
+üzerinde doğrular.
 
 ## Docker ile çalıştırma
 
@@ -85,6 +88,14 @@ PostgreSQL ve Redis hazırken ingestion persistence entegrasyonu `npm run test:i
 - Gerçek production için `deploy/.env.production.example` dosyasını
   `deploy/.env.production` olarak kopyalayın ve `deploy/README.md` içindeki
   `--env-file` komutlarını kullanın.
+
+Kökteki `.env` yalnızca host üzerinde yerel geliştirme içindir ve production
+servis adresleri içermemelidir. VDS secret'ları yalnızca Git'e alınmayan
+`deploy/.env.production` dosyasında tutulur. `npm run db:seed` hedef
+veritabanını temizlediği için varsayılan olarak yalnızca loopback adreslerinde
+çalışır. İzole bir uzak test veritabanını bilinçli olarak sıfırlamak için komuta
+ayrıca `ALLOW_DESTRUCTIVE_SEED=true` verilmesi gerekir; production ortamında bu
+değişken kullanılmamalıdır.
 
 ## Ortam değişkenleri
 

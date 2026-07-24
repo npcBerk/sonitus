@@ -6,9 +6,11 @@ Bu klasörde iki ayrı ve bilinçli çalışma düzeni vardır:
 - `compose.production.yml`: Gerçek VPS düzenidir. Bunlara ek olarak sürekli BullMQ worker, otomatik PostgreSQL backup ve Caddy'nin otomatik HTTPS yönetimi çalışır.
 
 Kökteki `.env.example`, Docker için değil host üzerinde `npm run dev` çalıştırmak
-içindir. Production Compose yalnızca `deploy/.env.production` dosyasını
-`--env-file` ile alır. Mock Compose gerekli değerleri kendi içinde güvenli yerel
-değerlerle tanımlar ve env dosyası istemez.
+içindir; burada yalnızca localhost bağlantıları bulunur. Production Compose
+yalnızca `deploy/.env.production` dosyasını `--env-file` ile alır. Bu dosya tam
+`DATABASE_URL` veya `REDIS_URL` taşımaz: Compose bağlantıları kendi özel ağındaki
+`postgres` ve `redis` servislerine yönlendirir. Mock Compose gerekli değerleri
+kendi içinde güvenli yerel değerlerle tanımlar ve env dosyası istemez.
 
 ## Docker'ın kısa mantığı
 
@@ -41,6 +43,12 @@ docker compose -f deploy/compose.mock.yml down
 ```
 
 `down` veritabanı volume'unu silmez. Tamamen sıfırlamak yalnızca mock ortamında gerekirse `docker compose -f deploy/compose.mock.yml down -v` kullanılır; `-v` kalıcı veriyi siler.
+
+Mock Compose içindeki tek seferlik `seed` servisi veritabanını bilerek temizler
+ve bu nedenle `ALLOW_DESTRUCTIVE_SEED=true` iznini yalnızca kendi izole
+PostgreSQL container'ına verir. Production Compose seed servisi içermez. Host
+üzerinde `npm run db:seed`, localhost dışındaki bir veritabanını bu açık izin
+olmadan temizlemeyi reddeder.
 
 ## 2. VPS hazırlığı
 

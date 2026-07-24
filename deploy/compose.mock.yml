@@ -58,6 +58,7 @@ services:
     command: ["npm", "run", "db:seed"]
     environment:
       DATABASE_URL: postgresql://sonitus:sonitus-mock-only@postgres:5432/sonitus?schema=public
+      ALLOW_DESTRUCTIVE_SEED: "true"
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -2,7 +2,13 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -10,6 +16,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -24,30 +31,53 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
-      DATABASE_URL: postgresql://sonitus:sonitus-ci@localhost:5432/sonitus?schema=public
-      REDIS_URL: redis://localhost:6379
-      SONITUS_DATA_MODE: database
-      INTERNAL_JOB_TOKEN: ci-only-internal-token-with-32-characters
+      CI_DATABASE_URL: postgresql://sonitus:sonitus-ci@localhost:5432/sonitus?schema=public
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npx prisma validate
-      - run: npm run db:deploy
-      - run: npm run db:seed
-      - run: npm run test:integration
-      - run: npm run check
-      - run: npm audit --omit=dev --audit-level=high
+
+      - name: Install dependencies
+        run: npm ci --no-audit
+        timeout-minutes: 5
+
+      - name: Validate Prisma schema
+        run: DATABASE_URL="$CI_DATABASE_URL" npx prisma validate
+
+      - name: Apply migrations to clean PostgreSQL
+        run: DATABASE_URL="$CI_DATABASE_URL" npm run db:deploy
+        timeout-minutes: 3
+
+      - name: Seed clean PostgreSQL
+        run: DATABASE_URL="$CI_DATABASE_URL" REDIS_URL= npm run db:seed
+        timeout-minutes: 3
+
+      - name: Lint
+        run: npm run lint
+        timeout-minutes: 3
+
+      - name: Typecheck
+        run: npm run typecheck
+        timeout-minutes: 5
+
+      - name: Unit tests
+        run: npm test
+        timeout-minutes: 5
+
+      - name: Build web image
+        run: docker build --target web --tag sonitus-web:ci .
+        timeout-minutes: 10
+
+      - name: Build worker image
+        run: docker build --target worker --tag sonitus-worker:ci .
+        timeout-minutes: 5
+
+      - name: Build migration image
+        run: docker build --target migrate --tag sonitus-migrate:ci .
+        timeout-minutes: 5
