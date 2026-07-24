@@ -21,6 +21,24 @@ kullanabilirsiniz:
 Script'i parametresiz çalıştırmak desteklenen tüm komutları ve örnekleri
 gösterir.
 
+VDS'te yeni bir sürüm yayınlamak için:
+
+```bash
+cd /opt/sonitus
+git pull --ff-only
+./deploy/vds-update.sh
+```
+
+`vds-update.sh`, varsayılan olarak Git'e alınmayan
+`deploy/.env.production` dosyasını otomatik kullanır. Compose yapılandırmasını
+doğrular, image'ları build eder, migration ve servis güncellemelerini uygular,
+ardından servis durumunu gösterir. Bu akışta `--env-file` veya `-f`
+parametrelerini elle yazmak gerekmez. Env dosyası başka bir konumdaysa:
+
+```bash
+SONITUS_ENV_FILE=/gizli/sonitus.env ./deploy/vds-update.sh
+```
+
 Kökteki `.env.example`, Docker için değil host üzerinde `npm run dev` çalıştırmak
 içindir; burada yalnızca localhost bağlantıları bulunur. Production Compose
 yalnızca `deploy/.env.production` dosyasını `--env-file` ile alır. Bu dosya tam
@@ -220,8 +238,7 @@ Her yayın öncesi backup'ın varlığını kontrol edin. Sonra yeni kodu alın 
 
 ```bash
 git pull --ff-only
-docker compose --env-file deploy/.env.production -f deploy/compose.production.yml build
-docker compose --env-file deploy/.env.production -f deploy/compose.production.yml up -d
+./deploy/vds-update.sh
 ```
 
 Compose yalnızca değişen container'ları yeniler; named volume'lara dokunmaz. Uygulama geri dönüşü için önceki Git commit'ine dönüp tekrar build yapılabilir. Veritabanı migration geri dönüşü ayrıca planlanmalıdır; Prisma otomatik rollback yapmaz.

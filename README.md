@@ -95,6 +95,17 @@ kontrolü çalıştırmaz; Prisma migration ve seed işlemlerini izole CI Postgr
   `./deploy/docker-production.sh ps` ile yapılabilir. Tüm kısa komutları görmek
   için ilgili script'i parametresiz çalıştırın.
 
+  VDS'te yeni kodu aldıktan sonra tüm güncelleme adımlarını tek komutla
+  çalıştırabilirsiniz:
+
+  ```bash
+  git pull --ff-only
+  ./deploy/vds-update.sh
+  ```
+
+  Script `deploy/.env.production` dosyasını otomatik kullanır; `--env-file` ve
+  Compose dosyası parametrelerini ayrıca yazmanız gerekmez.
+
 - Sahte snapshot ile tüm VPS topolojisini yerelde denemek için
   `docker compose -f deploy/compose.mock.yml up --build -d` kullanın. Bu yol env
   dosyası istemez, worker çalıştırmaz ve dış sağlayıcıya istek atmaz.
