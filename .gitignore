@@ -9,3 +9,4 @@ deploy/backups/
 *.log
 *.tsbuildinfo
 outputs/
+next-env.d.ts

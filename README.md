@@ -82,6 +82,19 @@ kontrolü çalıştırmaz; Prisma migration ve seed işlemlerini izole CI Postgr
 
 ## Docker ile çalıştırma
 
+- Tek tek Docker Compose komutlarını yazmamak için:
+
+  ```bash
+  ./deploy/docker-mock.sh up
+  ./deploy/docker-mock.sh logs
+  ./deploy/docker-mock.sh down
+  ```
+
+  Canlı ortamda aynı işlemler `./deploy/docker-production.sh deploy`,
+  `./deploy/docker-production.sh logs` ve
+  `./deploy/docker-production.sh ps` ile yapılabilir. Tüm kısa komutları görmek
+  için ilgili script'i parametresiz çalıştırın.
+
 - Sahte snapshot ile tüm VPS topolojisini yerelde denemek için
   `docker compose -f deploy/compose.mock.yml up --build -d` kullanın. Bu yol env
   dosyası istemez, worker çalıştırmaz ve dış sağlayıcıya istek atmaz.

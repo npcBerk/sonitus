@@ -5,6 +5,22 @@ Bu klasörde iki ayrı ve bilinçli çalışma düzeni vardır:
 - `compose.mock.yml`: VPS topolojisinin yerel provasıdır. Caddy, Next.js, PostgreSQL ve Redis çalışır; PostgreSQL sahte snapshot ile doldurulur. Worker çalışmaz ve CoinGecko'ya istek atılmaz.
 - `compose.production.yml`: Gerçek VPS düzenidir. Bunlara ek olarak sürekli BullMQ worker, otomatik PostgreSQL backup ve Caddy'nin otomatik HTTPS yönetimi çalışır.
 
+Uzun Compose komutları yerine repository kökünden aşağıdaki yardımcı script'leri
+kullanabilirsiniz:
+
+```bash
+./deploy/docker-mock.sh up
+./deploy/docker-mock.sh logs
+./deploy/docker-mock.sh down
+
+./deploy/docker-production.sh deploy
+./deploy/docker-production.sh logs worker
+./deploy/docker-production.sh ps
+```
+
+Script'i parametresiz çalıştırmak desteklenen tüm komutları ve örnekleri
+gösterir.
+
 Kökteki `.env.example`, Docker için değil host üzerinde `npm run dev` çalıştırmak
 içindir; burada yalnızca localhost bağlantıları bulunur. Production Compose
 yalnızca `deploy/.env.production` dosyasını `--env-file` ile alır. Bu dosya tam
