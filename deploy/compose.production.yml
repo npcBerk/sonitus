@@ -40,27 +40,27 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sonitus -d sonitus"]
+      test: [ "CMD-SHELL", "pg_isready -U sonitus -d sonitus" ]
       interval: 5s
       timeout: 5s
       retries: 20
     restart: unless-stopped
     logging: *default-logging
-    networks: [backend]
+    networks: [ backend ]
 
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command: [ "redis-server", "--appendonly", "yes" ]
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 20
     restart: unless-stopped
     logging: *default-logging
-    networks: [backend]
+    networks: [ backend ]
 
   migrate:
     build:
@@ -73,7 +73,7 @@ services:
         condition: service_healthy
     restart: "no"
     logging: *default-logging
-    networks: [backend]
+    networks: [ backend ]
 
   web:
     build:
@@ -87,14 +87,17 @@ services:
         condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
-    networks: [frontend, backend]
+    networks: [ frontend, backend ]
 
   worker:
     build:
       context: ..
       target: worker
     environment: *app-environment
-    command: ["sh", "-c", "npm run preflight:production && npm run worker:scan"]
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    command: [ "sh", "-c", "npm run preflight:production && npm run worker:scan" ]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -102,11 +105,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
-    networks: [backend]
+    networks: [ backend, frontend ]
 
   backup:
     image: postgres:16-alpine
-    entrypoint: ["/bin/sh", "/usr/local/bin/backup-postgres.sh"]
+    entrypoint: [ "/bin/sh", "/usr/local/bin/backup-postgres.sh" ]
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_DB: sonitus
@@ -122,7 +125,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
-    networks: [backend]
+    networks: [ backend ]
 
   caddy:
     image: caddy:2-alpine
@@ -141,7 +144,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
-    networks: [frontend]
+    networks: [ frontend ]
 
 volumes:
   postgres-data:
