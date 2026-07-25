@@ -502,9 +502,16 @@ export async function loadSnapshotStatus(): Promise<SnapshotStatus> {
 export async function loadAssetById(id: string): Promise<AssetDetail | null> {
   const prisma = getPrismaClient();
   if (!prisma) return getAssetById(id);
+  const historyStart = new Date(Date.now() - 30 * 24 * 60 * 60_000);
   const record = await prisma.asset.findFirst({
     where: { isActive: true, trackedUntil: { gte: new Date() }, OR: [{ id }, { providerId: id }, { symbol: id.toUpperCase() }] },
-    include: { metrics: { orderBy: { capturedAt: "desc" }, take: 168 } }
+    include: {
+      metrics: {
+        where: { capturedAt: { gte: historyStart } },
+        orderBy: { capturedAt: "desc" },
+        take: 2_000
+      }
+    }
   });
   if (!record || isStablecoinIdentity({ providerId: record.providerId })) return null;
   return mapAssetRecord({ ...record, metrics: record.metrics.slice().reverse() });

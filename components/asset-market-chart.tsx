@@ -1,6 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import {
+  AreaSeries,
+  ColorType,
+  createChart,
+  CrosshairMode,
+  HistogramSeries,
+  LineStyle,
+  type IChartApi,
+  type Time,
+  type UTCTimestamp
+} from "lightweight-charts";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { formatCompactCurrency, formatDetailedPrice } from "@/lib/format";
 import type { AssetHistoryPoint } from "@/lib/types";
@@ -10,62 +21,213 @@ type AssetMarketChartProps = {
   baselineVolume: number | null;
 };
 
-const WIDTH = 760;
-const PRICE_TOP = 24;
-const PRICE_BOTTOM = 190;
-const VOLUME_TOP = 226;
-const VOLUME_BOTTOM = 302;
-const CHART_LEFT = 18;
-const CHART_RIGHT = 742;
+type RangeKey = "24H" | "7D" | "30D" | "ALL";
 
-function formatPointTime(value: string) {
+const RANGE_MS: Record<Exclude<RangeKey, "ALL">, number> = {
+  "24H": 24 * 60 * 60_000,
+  "7D": 7 * 24 * 60 * 60_000,
+  "30D": 30 * 24 * 60 * 60_000
+};
+
+const ranges: RangeKey[] = ["24H", "7D", "30D", "ALL"];
+
+function formatPointTime(value: string | number) {
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     timeZone: "Europe/Istanbul"
-  }).format(new Date(value));
+  }).format(new Date(typeof value === "number" ? value * 1_000 : value));
 }
 
-function buildPath(points: Array<{ x: number; y: number }>) {
-  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+function formatAxisPrice(value: number) {
+  if (value >= 1_000) {
+    return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+  }
+  if (value >= 1) {
+    return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(value);
+  }
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }).format(value);
 }
 
 export function AssetMarketChart({ history, baselineVolume }: AssetMarketChartProps) {
-  const [activeIndex, setActiveIndex] = useState(Math.max(0, history.length - 1));
-  const geometry = useMemo(() => {
-    const prices = history.map((point) => point.price);
-    const volumes = history.map((point) => point.volume);
-    const minPrice = Math.min(...prices);
-    const maxPrice = Math.max(...prices);
-    const priceSpread = maxPrice - minPrice || Math.max(maxPrice * 0.01, 1);
-    const maxVolume = Math.max(...volumes, baselineVolume ?? 0, 1);
-    const xFor = (index: number) =>
-      CHART_LEFT + (index / Math.max(1, history.length - 1)) * (CHART_RIGHT - CHART_LEFT);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const [range, setRange] = useState<RangeKey>("7D");
+  const [showVolume, setShowVolume] = useState(true);
 
-    return {
-      minPrice,
-      maxPrice,
-      maxVolume,
-      pricePoints: history.map((point, index) => ({
-        x: xFor(index),
-        y: PRICE_BOTTOM - ((point.price - minPrice) / priceSpread) * (PRICE_BOTTOM - PRICE_TOP)
-      })),
-      volumeBars: history.map((point, index) => ({
-        x: xFor(index),
-        y: VOLUME_BOTTOM - (point.volume / maxVolume) * (VOLUME_BOTTOM - VOLUME_TOP)
-      })),
-      baselineY:
-        baselineVolume === null
-          ? null
-          : VOLUME_BOTTOM - (baselineVolume / maxVolume) * (VOLUME_BOTTOM - VOLUME_TOP)
+  const filteredHistory = useMemo(() => {
+    if (history.length === 0 || range === "ALL") return history;
+    const lastTimestamp = new Date(history.at(-1)?.capturedAt ?? 0).getTime();
+    const cutoff = lastTimestamp - RANGE_MS[range];
+    const points = history.filter((point) => new Date(point.capturedAt).getTime() >= cutoff);
+    return points.length >= 2 ? points : history.slice(-2);
+  }, [history, range]);
+
+  const [selected, setSelected] = useState<AssetHistoryPoint | null>(history.at(-1) ?? null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || filteredHistory.length < 2) return;
+
+    const pointByTime = new Map<number, AssetHistoryPoint>();
+    const priceData = filteredHistory.map((point) => {
+      const time = Math.floor(new Date(point.capturedAt).getTime() / 1_000) as UTCTimestamp;
+      pointByTime.set(time, point);
+      return { time, value: point.price };
+    });
+    const volumeData = filteredHistory.map((point, index) => {
+      const time = Math.floor(new Date(point.capturedAt).getTime() / 1_000) as UTCTimestamp;
+      const previous = filteredHistory[index - 1];
+      return {
+        time,
+        value: point.volume,
+        color:
+          !previous || point.price >= previous.price
+            ? "rgba(52, 211, 153, 0.42)"
+            : "rgba(251, 113, 133, 0.42)"
+      };
+    });
+
+    const chart = createChart(container, {
+      autoSize: true,
+      height: 468,
+      layout: {
+        background: { type: ColorType.Solid, color: "#060b16" },
+        textColor: "#7c8ba1",
+        fontFamily: "var(--font-mono), monospace",
+        fontSize: 11,
+        attributionLogo: true
+      },
+      localization: {
+        locale: "en-US",
+        priceFormatter: formatAxisPrice,
+        timeFormatter: (time: Time) => formatPointTime(time as number)
+      },
+      grid: {
+        vertLines: { color: "rgba(148, 163, 184, 0.075)", style: LineStyle.Dotted },
+        horzLines: { color: "rgba(148, 163, 184, 0.075)", style: LineStyle.Dotted }
+      },
+      crosshair: {
+        mode: CrosshairMode.Magnet,
+        vertLine: {
+          color: "rgba(148, 163, 184, 0.55)",
+          width: 1,
+          style: LineStyle.Dashed,
+          labelBackgroundColor: "#273449"
+        },
+        horzLine: {
+          color: "rgba(148, 163, 184, 0.45)",
+          width: 1,
+          style: LineStyle.Dashed,
+          labelBackgroundColor: "#0891b2"
+        }
+      },
+      rightPriceScale: {
+        visible: true,
+        borderColor: "rgba(148, 163, 184, 0.16)",
+        entireTextOnly: true,
+        scaleMargins: {
+          top: 0.08,
+          bottom: showVolume ? 0.31 : 0.1
+        }
+      },
+      leftPriceScale: { visible: false },
+      timeScale: {
+        visible: true,
+        borderColor: "rgba(148, 163, 184, 0.16)",
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 3,
+        barSpacing: 8,
+        minBarSpacing: 2,
+        fixLeftEdge: false,
+        fixRightEdge: false
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true
+      }
+    });
+    chartRef.current = chart;
+
+    const priceSeries = chart.addSeries(AreaSeries, {
+      lineColor: "#22d3ee",
+      lineWidth: 2,
+      topColor: "rgba(34, 211, 238, 0.18)",
+      bottomColor: "rgba(34, 211, 238, 0.01)",
+      priceLineColor: "#22d3ee",
+      priceLineStyle: LineStyle.Dashed,
+      priceLineWidth: 1,
+      priceLineVisible: true,
+      lastValueVisible: true,
+      crosshairMarkerVisible: true,
+      crosshairMarkerRadius: 4,
+      crosshairMarkerBorderColor: "#020617",
+      crosshairMarkerBackgroundColor: "#67e8f9",
+      priceFormat: {
+        type: "custom",
+        formatter: formatAxisPrice,
+        minMove: filteredHistory.at(-1)!.price < 1 ? 0.00000001 : 0.01
+      }
+    });
+    priceSeries.setData(priceData);
+
+    if (showVolume) {
+      const volumeSeries = chart.addSeries(HistogramSeries, {
+        priceScaleId: "",
+        priceFormat: { type: "volume" },
+        priceLineVisible: false,
+        lastValueVisible: false
+      });
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.76, bottom: 0 }
+      });
+      volumeSeries.setData(volumeData);
+
+      if (baselineVolume !== null) {
+        volumeSeries.createPriceLine({
+          price: baselineVolume,
+          color: "rgba(167, 139, 250, 0.75)",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          lineVisible: true,
+          axisLabelVisible: false,
+          title: "24h baseline"
+        });
+      }
+    }
+
+    const crosshairHandler = (param: { time?: Time }) => {
+      if (typeof param.time !== "number") {
+        setSelected(filteredHistory.at(-1) ?? null);
+        return;
+      }
+      setSelected(pointByTime.get(param.time) ?? filteredHistory.at(-1) ?? null);
     };
-  }, [baselineVolume, history]);
+
+    chart.subscribeCrosshairMove(crosshairHandler);
+    chart.timeScale().fitContent();
+    setSelected(filteredHistory.at(-1) ?? null);
+
+    return () => {
+      chart.unsubscribeCrosshairMove(crosshairHandler);
+      chart.remove();
+      chartRef.current = null;
+    };
+  }, [baselineVolume, filteredHistory, showVolume]);
 
   if (history.length < 2) {
     return (
-      <div className="flex min-h-72 items-center justify-center rounded-lg border border-dashed border-white/10 bg-slate-950/30 px-6 text-center">
+      <div className="flex min-h-[420px] items-center justify-center rounded-lg border border-dashed border-white/10 bg-slate-950/30 px-6 text-center">
         <div>
           <p className="text-sm font-medium text-slate-200">History is still warming up</p>
           <p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">
@@ -76,165 +238,101 @@ export function AssetMarketChart({ history, baselineVolume }: AssetMarketChartPr
     );
   }
 
-  const safeActiveIndex = Math.min(activeIndex, history.length - 1);
-  const active = history[safeActiveIndex];
-  const activePricePoint = geometry.pricePoints[safeActiveIndex];
-  const activeVolumeBar = geometry.volumeBars[safeActiveIndex];
-  const barWidth = Math.max(3, Math.min(14, (CHART_RIGHT - CHART_LEFT) / history.length - 3));
-  const areaPath = `${buildPath(geometry.pricePoints)} L ${CHART_RIGHT} ${PRICE_BOTTOM} L ${CHART_LEFT} ${PRICE_BOTTOM} Z`;
-
-  function selectFromPointer(clientX: number, currentTarget: SVGSVGElement) {
-    const bounds = currentTarget.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (clientX - bounds.left) / bounds.width));
-    setActiveIndex(Math.round(ratio * (history.length - 1)));
-  }
-
   return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="font-mono text-base font-semibold text-slate-50">{formatDetailedPrice(active.price)}</p>
-          <p className="mt-0.5 text-[10px] text-slate-500">{formatPointTime(active.capturedAt)}</p>
+    <div className="overflow-hidden rounded-lg border border-white/[0.09] bg-[#060b16]">
+      <div className="flex flex-col gap-3 border-b border-white/[0.08] px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
+          <div>
+            <p className="signal-label">Price</p>
+            <p className="mt-1 font-mono text-sm font-semibold text-slate-50">
+              {selected ? formatDetailedPrice(selected.price) : "—"}
+            </p>
+          </div>
+          <div>
+            <p className="signal-label">24h volume</p>
+            <p className="mt-1 font-mono text-sm font-semibold text-slate-200">
+              {selected ? formatCompactCurrency(selected.volume) : "—"}
+            </p>
+          </div>
+          <div className="hidden sm:block">
+            <p className="signal-label">Time</p>
+            <p className="mt-1 font-mono text-[11px] font-medium text-slate-400">
+              {selected ? formatPointTime(selected.capturedAt) : "—"}
+            </p>
+          </div>
         </div>
-        <div className="text-right">
-          <p className="font-mono text-sm font-semibold text-violet-200">{formatCompactCurrency(active.volume)}</p>
-          <p className="mt-0.5 text-[10px] text-slate-500">24h rolling volume</p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-md border border-white/[0.09] bg-slate-950/70 p-0.5" aria-label="Chart range">
+            {ranges.map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setRange(item)}
+                className={`rounded px-2.5 py-1.5 font-mono text-[10px] transition ${
+                  item === range
+                    ? "bg-cyan-400/15 text-cyan-200"
+                    : "text-slate-500 hover:bg-white/[0.05] hover:text-slate-300"
+                }`}
+                aria-pressed={item === range}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowVolume((visible) => !visible)}
+            className={`rounded-md border px-2.5 py-1.5 text-[10px] transition ${
+              showVolume
+                ? "border-violet-400/20 bg-violet-400/10 text-violet-200"
+                : "border-white/[0.09] bg-slate-950/70 text-slate-500 hover:text-slate-300"
+            }`}
+            aria-pressed={showVolume}
+          >
+            Volume
+          </button>
+          <button
+            type="button"
+            onClick={() => chartRef.current?.timeScale().fitContent()}
+            className="rounded-md border border-white/[0.09] bg-slate-950/70 px-2.5 py-1.5 text-[10px] text-slate-500 transition hover:text-slate-300"
+          >
+            Reset view
+          </button>
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-slate-950/45">
-        <svg
-          viewBox={`0 0 ${WIDTH} 330`}
-          className="h-[270px] w-full touch-pan-y outline-none sm:h-[320px]"
-          preserveAspectRatio="none"
-          role="img"
-          aria-label="Stored price and 24 hour volume history. Use left and right arrow keys to inspect data points."
-          tabIndex={0}
-          onPointerMove={(event) => selectFromPointer(event.clientX, event.currentTarget)}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") {
-              event.preventDefault();
-              setActiveIndex((index) => Math.max(0, index - 1));
-            }
-            if (event.key === "ArrowRight") {
-              event.preventDefault();
-              setActiveIndex((index) => Math.min(history.length - 1, index + 1));
-            }
-          }}
-        >
-          <defs>
-            <linearGradient id="detail-price-line" x1="0" x2="1">
-              <stop offset="0%" stopColor="#22d3ee" />
-              <stop offset="100%" stopColor="#818cf8" />
-            </linearGradient>
-            <linearGradient id="detail-price-fill" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.18" />
-              <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
-            </linearGradient>
-          </defs>
+      <div
+        ref={containerRef}
+        className="h-[468px] w-full"
+        role="img"
+        aria-label="Interactive price chart with a right-side price scale, bottom time scale, crosshair, zoom, pan, and volume histogram."
+      />
 
-          {[PRICE_TOP, (PRICE_TOP + PRICE_BOTTOM) / 2, PRICE_BOTTOM].map((y) => (
-            <line
-              key={y}
-              x1={CHART_LEFT}
-              x2={CHART_RIGHT}
-              y1={y}
-              y2={y}
-              stroke="rgba(148,163,184,0.1)"
-              strokeDasharray="3 7"
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
-
-          <path d={areaPath} fill="url(#detail-price-fill)" />
-          <path
-            d={buildPath(geometry.pricePoints)}
-            fill="none"
-            stroke="url(#detail-price-line)"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-
-          <line
-            x1={CHART_LEFT}
-            x2={CHART_RIGHT}
-            y1={212}
-            y2={212}
-            stroke="rgba(148,163,184,0.12)"
-            vectorEffect="non-scaling-stroke"
-          />
-
-          {geometry.baselineY !== null ? (
-            <line
-              x1={CHART_LEFT}
-              x2={CHART_RIGHT}
-              y1={geometry.baselineY}
-              y2={geometry.baselineY}
-              stroke="rgba(167,139,250,0.55)"
-              strokeDasharray="4 5"
-              vectorEffect="non-scaling-stroke"
-            />
-          ) : null}
-
-          {geometry.volumeBars.map((bar, index) => (
-            <rect
-              key={`${history[index].capturedAt}-${index}`}
-              x={bar.x - barWidth / 2}
-              y={bar.y}
-              width={barWidth}
-              height={Math.max(1, VOLUME_BOTTOM - bar.y)}
-              rx={2}
-              fill={index === safeActiveIndex ? "#a78bfa" : "rgba(139,92,246,0.38)"}
-            />
-          ))}
-
-          <line
-            x1={activePricePoint.x}
-            x2={activePricePoint.x}
-            y1={PRICE_TOP}
-            y2={VOLUME_BOTTOM}
-            stroke="rgba(226,232,240,0.26)"
-            strokeDasharray="2 4"
-            vectorEffect="non-scaling-stroke"
-          />
-          <circle
-            cx={activePricePoint.x}
-            cy={activePricePoint.y}
-            r={4}
-            fill="#020617"
-            stroke="#67e8f9"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-          />
-          <circle cx={activeVolumeBar.x} cy={activeVolumeBar.y} r={3} fill="#c4b5fd" />
-
-          <text x={CHART_LEFT} y={322} fill="#64748b" fontSize="10">
-            {formatPointTime(history[0].capturedAt)}
-          </text>
-          <text x={CHART_RIGHT} y={322} fill="#64748b" fontSize="10" textAnchor="end">
-            {formatPointTime(history.at(-1)?.capturedAt ?? history[0].capturedAt)}
-          </text>
-        </svg>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-[10px] text-slate-500">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/[0.08] px-3 py-2.5 text-[10px] text-slate-500">
         <span className="flex items-center gap-2">
-          <span className="h-0.5 w-4 bg-gradient-to-r from-cyan-400 to-indigo-400" />
+          <span className="h-0.5 w-4 bg-cyan-400" />
           Price
         </span>
-        <span className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-sm bg-violet-500/60" />
-          24h volume
-        </span>
-        {baselineVolume !== null ? (
-          <span className="flex items-center gap-2">
-            <span className="h-0 w-4 border-t border-dashed border-violet-300/70" />
-            Previous 24h baseline
-          </span>
+        {showVolume ? (
+          <>
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400/50" />
+              Up volume
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-sm bg-rose-400/50" />
+              Down volume
+            </span>
+            {baselineVolume !== null ? (
+              <span className="flex items-center gap-2">
+                <span className="h-0 w-4 border-t border-dashed border-violet-300/80" />
+                24h baseline
+              </span>
+            ) : null}
+          </>
         ) : null}
-        <span className="ml-auto font-mono">{history.length} stored snapshots</span>
+        <span className="ml-auto">Scroll/pinch to zoom · drag to pan · crosshair for exact values</span>
       </div>
     </div>
   );
