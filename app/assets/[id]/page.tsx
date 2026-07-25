@@ -1,15 +1,106 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { MetricCard } from "@/components/metric-card";
+import { AssetMarketChart } from "@/components/asset-market-chart";
 import { UpdateStatusBadge } from "@/components/update-status-badge";
 import { loadAssetById } from "@/lib/dashboard";
-import { formatClock, formatCompactCurrency, formatDetailedPrice, formatSignedPercent } from "@/lib/format";
+import {
+  formatCompactCurrency,
+  formatDetailedPrice,
+  formatPercent,
+  formatSignedPercent
+} from "@/lib/format";
+import type { AssetDetail } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export function generateStaticParams() {
   return [];
+}
+
+function getParticipationSignal(asset: AssetDetail) {
+  if (asset.baselineStatus !== "ready" || asset.volumeDelta24h === null) {
+    return {
+      label: "Baseline warming up",
+      description: "A reliable volume comparison will appear after a full 24-hour reference is available.",
+      tone: "text-slate-300",
+      dot: "bg-slate-500"
+    };
+  }
+
+  if (asset.volumeDelta24h >= 50) {
+    return {
+      label: "Exceptional participation",
+      description: `Volume is ${formatSignedPercent(asset.volumeDelta24h)} above the previous 24-hour baseline.`,
+      tone: "text-emerald-200",
+      dot: "bg-emerald-300"
+    };
+  }
+  if (asset.volumeDelta24h >= 15) {
+    return {
+      label: "Participation expanding",
+      description: "Trading activity is meaningfully above its recent baseline.",
+      tone: "text-cyan-200",
+      dot: "bg-cyan-300"
+    };
+  }
+  if (asset.volumeDelta24h <= -15) {
+    return {
+      label: "Participation cooling",
+      description: "Trading activity is running below its previous 24-hour baseline.",
+      tone: "text-amber-200",
+      dot: "bg-amber-300"
+    };
+  }
+  return {
+    label: "Near normal participation",
+    description: "Current volume is close to its previous 24-hour baseline.",
+    tone: "text-slate-200",
+    dot: "bg-slate-300"
+  };
+}
+
+function getPriceVolumeRead(asset: AssetDetail) {
+  const volumeDirection = asset.volumeDelta24h ?? 0;
+  if (asset.baselineStatus !== "ready" || asset.volumeDelta24h === null) {
+    return "Price direction is available now; confirmation quality will improve once the volume baseline is ready.";
+  }
+  if (asset.change24h >= 0 && volumeDirection >= 0) {
+    return "The price advance is backed by rising participation, a stronger confirmation than price movement alone.";
+  }
+  if (asset.change24h < 0 && volumeDirection >= 0) {
+    return "The decline is attracting more activity, so selling pressure has meaningful participation behind it.";
+  }
+  if (asset.change24h >= 0 && volumeDirection < 0) {
+    return "Price is rising while participation fades. This divergence makes the move less convincing.";
+  }
+  return "Price and activity are both cooling, which points to a lower-conviction pullback rather than broad acceleration.";
+}
+
+function getTurnoverRead(volMcap: number) {
+  if (volMcap >= 0.2) return "Very high turnover relative to market value";
+  if (volMcap >= 0.05) return "Active turnover relative to market value";
+  return "Measured turnover relative to market value";
+}
+
+function Metric({
+  label,
+  value,
+  detail,
+  valueClassName = "text-slate-100"
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="min-w-0 px-3 py-3 sm:px-4">
+      <p className="signal-label">{label}</p>
+      <p className={`mt-1 truncate font-mono text-sm font-semibold ${valueClassName}`}>{value}</p>
+      <p className="mt-1 truncate text-[10px] text-slate-500">{detail}</p>
+    </div>
+  );
 }
 
 export default async function AssetPage({ params }: { params: Promise<{ id: string }> }) {
@@ -18,103 +109,146 @@ export default async function AssetPage({ params }: { params: Promise<{ id: stri
   if (!asset) notFound();
 
   const volMcap = asset.currentMarketCap > 0 ? asset.currentVolume / asset.currentMarketCap : 0;
+  const participation = getParticipationSignal(asset);
+  const priceTone = asset.change24h >= 0 ? "text-emerald-300" : "text-rose-300";
+  const volumeTone =
+    asset.volumeDelta24h === null
+      ? "text-slate-100"
+      : asset.volumeDelta24h >= 0
+        ? "text-emerald-300"
+        : "text-amber-300";
 
   return (
-    <div className="space-y-6">
-      <section className="sonitus-panel p-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <Link href="/" className="text-sm text-cyan-200 transition hover:text-cyan-100">
-            Back to dashboard
+    <div className="space-y-3">
+      <section className="sonitus-panel overflow-hidden" aria-labelledby="asset-title">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.07] px-3 py-2 sm:px-4">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 transition hover:text-cyan-200"
+          >
+            <span aria-hidden="true">←</span>
+            Dashboard
           </Link>
           <UpdateStatusBadge updatedAt={asset.updatedAt} />
         </div>
-        <div className="mt-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.4em] text-slate-400">{asset.symbol}</p>
-            <h2 className="mt-3 text-4xl font-semibold text-slate-50">{asset.name}</h2>
-            <p className="mt-3 text-sm text-slate-300">
-              Provider id: <span className="text-slate-50">{asset.providerId}</span>
+
+        <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-cyan-300/15 bg-cyan-300/[0.07] font-mono text-xs font-semibold text-cyan-200">
+              {asset.symbol.slice(0, 4)}
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <h2 id="asset-title" className="truncate text-xl font-semibold text-slate-50 sm:text-2xl">
+                  {asset.name}
+                </h2>
+                <span className="font-mono text-xs text-slate-500">{asset.symbol}</span>
+              </div>
+              <p className="mt-1 truncate font-mono text-[10px] text-slate-600">
+                Rank #{asset.rank || "—"} · {asset.providerId}
+              </p>
+            </div>
+          </div>
+
+          <div className="sm:text-right">
+            <p className="font-mono text-2xl font-semibold tracking-tight text-slate-50 sm:text-3xl">
+              {formatDetailedPrice(asset.lastPrice)}
+            </p>
+            <p className={`mt-1 font-mono text-xs font-semibold ${priceTone}`}>
+              {formatSignedPercent(asset.change24h)} <span className="font-sans font-normal text-slate-500">24h</span>
             </p>
           </div>
-          <div className="rounded-3xl border border-white/10 bg-white/5 px-5 py-4">
-            <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Last refreshed</p>
-            <p className="mt-2 text-lg font-medium text-slate-50">{formatClock(asset.updatedAt)}</p>
-          </div>
+        </div>
+
+        <div className="grid grid-cols-2 border-t border-white/[0.07] bg-slate-950/25 sm:grid-cols-4 [&>*:not(:last-child)]:border-r [&>*]:border-white/[0.07]">
+          <Metric
+            label="Current volume"
+            value={formatCompactCurrency(asset.currentVolume)}
+            detail={
+              asset.volumeDelta24h === null
+                ? "Baseline unavailable"
+                : `${formatSignedPercent(asset.volumeDelta24h)} vs baseline`
+            }
+            valueClassName={volumeTone}
+          />
+          <Metric
+            label="24h baseline"
+            value={asset.baselineVolume === null ? "—" : formatCompactCurrency(asset.baselineVolume)}
+            detail={asset.baselineStatus.replace("_", " ")}
+          />
+          <Metric
+            label="Volume / MCap"
+            value={formatPercent(volMcap * 100)}
+            detail={getTurnoverRead(volMcap)}
+            valueClassName="text-violet-200"
+          />
+          <Metric
+            label="Market cap"
+            value={formatCompactCurrency(asset.currentMarketCap)}
+            detail={asset.absoluteVolumeDelta === null ? "Volume change unavailable" : `${formatCompactCurrency(Math.abs(asset.absoluteVolumeDelta))} absolute volume shift`}
+          />
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <MetricCard label="Price" value={formatDetailedPrice(asset.lastPrice)} kind="text" tone="cyan" />
-        <MetricCard label="24h change" value={asset.change24h} kind="signedPercent" tone="emerald" />
-        <MetricCard label="Volume / MCap" value={volMcap * 100} kind="percent" tone="violet" help="Share of turnover versus market value" />
-        <MetricCard label="Current volume" value={asset.currentVolume} kind="currency" tone="cyan" />
-        <MetricCard label="24h baseline" value={asset.baselineVolume === null ? "—" : formatCompactCurrency(asset.baselineVolume)} tone="violet" />
-        <MetricCard label="Volume delta" value={asset.volumeDelta24h === null ? "—" : formatSignedPercent(asset.volumeDelta24h)} tone="amber" help={asset.baselineStatus.replace("_", " ")} />
-      </section>
-
-      <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="sonitus-panel p-6">
-          <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Trend</p>
-          <h3 className="mt-2 text-xl font-semibold text-slate-50">Intraday sparkline</h3>
-          <div className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-slate-950/70 p-4">
-            <svg viewBox="0 0 400 140" className="h-40 w-full" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="asset-gradient" x1="0" x2="1">
-                  <stop offset="0%" stopColor="#22d3ee" />
-                  <stop offset="50%" stopColor="#38bdf8" />
-                  <stop offset="100%" stopColor="#a78bfa" />
-                </linearGradient>
-              </defs>
-              <polyline
-                fill="none"
-                stroke="url(#asset-gradient)"
-                strokeWidth="4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                points={asset.sparkline
-                  .map((point, index) => {
-                    const x = (index / Math.max(1, asset.sparkline.length - 1)) * 380 + 10;
-                    const min = Math.min(...asset.sparkline);
-                    const max = Math.max(...asset.sparkline);
-                    const spread = max - min || 1;
-                    const y = 120 - ((point - min) / spread) * 100;
-                    return `${x},${y}`;
-                  })
-                  .join(" ")}
-              />
-            </svg>
-          </div>
-          <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300">
-            Price action is presented as a compact signal strip. The curve is intentionally simple so the dashboard can stay fast while still surfacing direction, momentum, and pressure at a glance.
-          </p>
-        </div>
-
-        <div className="sonitus-panel p-6">
-          <p className="text-xs uppercase tracking-[0.35em] text-slate-400">Signal notes</p>
-          <div className="mt-4 space-y-3 text-sm text-slate-300">
-            <p>Market cap: <span className="text-slate-50">{formatCompactCurrency(asset.currentMarketCap)}</span></p>
-            <p>Volume: <span className="text-slate-50">{formatCompactCurrency(asset.currentVolume)}</span></p>
-            <p>1h change: <span className={asset.change1h >= 0 ? "text-emerald-300" : "text-rose-300"}>{formatSignedPercent(asset.change1h)}</span></p>
-            <p>24h change: <span className={asset.change24h >= 0 ? "text-emerald-300" : "text-rose-300"}>{formatSignedPercent(asset.change24h)}</span></p>
-            <p>Baseline status: <span className="text-slate-50">{asset.baselineStatus.replace("_", " ")}</span></p>
-            <p>Baseline volume: <span className="text-slate-50">{asset.baselineVolume === null ? "—" : formatCompactCurrency(asset.baselineVolume)}</span></p>
-            <p>
-              Volume delta:{" "}
-              <span className={asset.volumeDelta24h !== null && asset.volumeDelta24h >= 0 ? "text-emerald-300" : "text-amber-300"}>
-                {asset.volumeDelta24h === null ? "—" : formatSignedPercent(asset.volumeDelta24h)}
-              </span>
+      <section className="grid items-start gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,0.45fr)]">
+        <div className="sonitus-panel p-4 sm:p-5">
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="signal-label">Market activity</p>
+              <h3 className="mt-1 text-base font-semibold text-slate-100">Price and volume, together</h3>
+            </div>
+            <p className="max-w-xs text-right text-[10px] leading-4 text-slate-500">
+              Volume bars use the snapshots already stored by each market scan.
             </p>
-            <p>Absolute volume delta: <span className="text-slate-50">{asset.absoluteVolumeDelta === null ? "—" : formatCompactCurrency(asset.absoluteVolumeDelta)}</span></p>
-            <p>Signal score: <span className="text-slate-50">{asset.volumeSignalScore?.toFixed(2) ?? "—"}</span></p>
           </div>
-          <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
-            {asset.change24h >= 0
-              ? "Momentum is supportive on the 24h window, and volume behavior confirms participation."
-              : "The 24h trend is soft, so this asset is more interesting as a watchlist item than a breakout leader."}
-          </div>
+          <AssetMarketChart history={asset.history} baselineVolume={asset.baselineVolume} />
         </div>
-      </section>
 
+        <aside className="sonitus-panel overflow-hidden" aria-labelledby="signal-read-title">
+          <div className="border-b border-white/[0.07] px-4 py-3">
+            <p className="signal-label">Signal read</p>
+            <h3 id="signal-read-title" className="mt-1 text-base font-semibold text-slate-100">
+              What the data says
+            </h3>
+          </div>
+
+          <div className="p-4">
+            <div className="flex items-start gap-3">
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${participation.dot}`} />
+              <div>
+                <p className={`text-sm font-medium ${participation.tone}`}>{participation.label}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">{participation.description}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-lg border border-white/[0.07] bg-white/[0.025] p-3">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Price × volume confirmation</p>
+              <p className="mt-2 text-xs leading-5 text-slate-300">{getPriceVolumeRead(asset)}</p>
+            </div>
+
+            <dl className="mt-4 divide-y divide-white/[0.06] text-xs">
+              <div className="flex items-center justify-between gap-3 py-2.5">
+                <dt className="text-slate-500">1h momentum</dt>
+                <dd className={`font-mono font-medium ${asset.change1h >= 0 ? "text-emerald-300" : "text-rose-300"}`}>
+                  {formatSignedPercent(asset.change1h)}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 py-2.5">
+                <dt className="text-slate-500">24h momentum</dt>
+                <dd className={`font-mono font-medium ${priceTone}`}>{formatSignedPercent(asset.change24h)}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 py-2.5">
+                <dt className="text-slate-500">Volume signal score</dt>
+                <dd className="font-mono font-medium text-slate-200">{asset.volumeSignalScore?.toFixed(2) ?? "—"}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 py-2.5">
+                <dt className="text-slate-500">Stored snapshots</dt>
+                <dd className="font-mono font-medium text-slate-200">{asset.history.length}</dd>
+              </div>
+            </dl>
+          </div>
+        </aside>
+      </section>
     </div>
   );
 }

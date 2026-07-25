@@ -9,6 +9,8 @@ import { readDashboardCache, readSnapshotStatusCache } from "./redis";
 import { isStablecoinIdentity } from "./stablecoins";
 import type {
   Asset,
+  AssetDetail,
+  AssetHistoryPoint,
   DashboardAsset,
   DashboardData,
   DashboardFilters,
@@ -287,8 +289,26 @@ export function getDashboardPayload(filters?: DashboardFilters) {
   return createDashboardPayload(getBaseAssets(), baseScanJob, new Date().toISOString(), filters);
 }
 
-export function getAssetById(id: string) {
-  return getBaseAssets().find((asset) => asset.id === id || asset.providerId === id || asset.symbol.toLowerCase() === id.toLowerCase()) ?? null;
+function mockAssetHistory(asset: Asset): AssetHistoryPoint[] {
+  const baselineVolume = asset.baselineVolume ?? asset.currentVolume;
+  const start = new Date(asset.updatedAt).getTime() - (asset.sparkline.length - 1) * 3 * 60 * 60_000;
+  const priceScale = asset.sparkline.at(-1) ? asset.lastPrice / (asset.sparkline.at(-1) ?? 1) : 1;
+  return asset.sparkline.map((price, index) => {
+    const progress = index / Math.max(1, asset.sparkline.length - 1);
+    const volumeWave = 0.88 + Math.sin(index * 1.7) * 0.08;
+    const volume = baselineVolume + (asset.currentVolume - baselineVolume) * progress;
+    return {
+      capturedAt: new Date(start + index * 3 * 60 * 60_000).toISOString(),
+      price: index === asset.sparkline.length - 1 ? asset.lastPrice : price * priceScale,
+      volume: index === asset.sparkline.length - 1 ? asset.currentVolume : Math.max(0, volume * volumeWave),
+      marketCap: asset.currentMarketCap
+    };
+  });
+}
+
+export function getAssetById(id: string): AssetDetail | null {
+  const asset = getBaseAssets().find((item) => item.id === id || item.providerId === id || item.symbol.toLowerCase() === id.toLowerCase());
+  return asset ? { ...asset, history: mockAssetHistory(asset) } : null;
 }
 
 export function runScanJob(): ScanJob {
@@ -297,6 +317,7 @@ export function runScanJob(): ScanJob {
 }
 
 type AssetRecordWithMetric = PrismaAssetRecord & { metrics?: Array<{
+  price: number; marketCap: number; volume24h: number;
   change1h: number; change24h: number; baselineVolume: number | null; baselineCapturedAt: Date | null;
   volumeDelta24h: number | null; absoluteVolumeDelta: number | null; volumeSignalScore: number | null;
   baselineStatus: "warming_up" | "ready" | "missing" | "stale"; providerUpdatedAt: Date; capturedAt: Date;
@@ -334,8 +355,9 @@ export const dashboardAssetSelect = {
 
 type DashboardAssetRecord = Prisma.AssetGetPayload<{ select: typeof dashboardAssetSelect }>;
 
-export function mapAssetRecord(asset: AssetRecordWithMetric): Asset {
-  const metric = asset.metrics?.[0];
+export function mapAssetRecord(asset: AssetRecordWithMetric): AssetDetail {
+  const metrics = asset.metrics ?? [];
+  const metric = metrics[metrics.length - 1];
   return {
     id: asset.id, providerId: asset.providerId, symbol: asset.symbol, name: asset.name, rank: asset.rank,
     lastPrice: asset.lastPrice, currentMarketCap: asset.currentMarketCap, currentVolume: asset.currentVolume,
@@ -344,7 +366,14 @@ export function mapAssetRecord(asset: AssetRecordWithMetric): Asset {
     volumeDelta24h: metric?.volumeDelta24h ?? null, absoluteVolumeDelta: metric?.absoluteVolumeDelta ?? null,
     volumeSignalScore: metric?.volumeSignalScore ?? null, baselineStatus: metric?.baselineStatus ?? "warming_up",
     candidateLastSeenAt: asset.candidateLastSeenAt?.toISOString() ?? null, trackedUntil: asset.trackedUntil?.toISOString() ?? null,
-    sparkline: Array.isArray(asset.sparkline) ? asset.sparkline : [], updatedAt: (metric?.providerUpdatedAt ?? asset.updatedAt).toISOString()
+    sparkline: Array.isArray(asset.sparkline) ? asset.sparkline : [],
+    history: metrics.map((point) => ({
+      capturedAt: point.capturedAt.toISOString(),
+      price: point.price,
+      volume: point.volume24h,
+      marketCap: point.marketCap
+    })),
+    updatedAt: (metric?.providerUpdatedAt ?? asset.updatedAt).toISOString()
   };
 }
 
@@ -470,12 +499,13 @@ export async function loadSnapshotStatus(): Promise<SnapshotStatus> {
   };
 }
 
-export async function loadAssetById(id: string): Promise<Asset | null> {
+export async function loadAssetById(id: string): Promise<AssetDetail | null> {
   const prisma = getPrismaClient();
   if (!prisma) return getAssetById(id);
   const record = await prisma.asset.findFirst({
     where: { isActive: true, trackedUntil: { gte: new Date() }, OR: [{ id }, { providerId: id }, { symbol: id.toUpperCase() }] },
-    include: { metrics: { orderBy: { capturedAt: "desc" }, take: 1 } }
+    include: { metrics: { orderBy: { capturedAt: "desc" }, take: 168 } }
   });
-  return !record || isStablecoinIdentity({ providerId: record.providerId }) ? null : mapAssetRecord(record);
+  if (!record || isStablecoinIdentity({ providerId: record.providerId })) return null;
+  return mapAssetRecord({ ...record, metrics: record.metrics.slice().reverse() });
 }

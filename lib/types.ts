@@ -26,6 +26,17 @@ export type Asset = DashboardAsset & {
   sparkline: number[];
 };
 
+export type AssetHistoryPoint = {
+  capturedAt: string;
+  price: number;
+  volume: number;
+  marketCap: number;
+};
+
+export type AssetDetail = Asset & {
+  history: AssetHistoryPoint[];
+};
+
 export type ScanJob = {
   id: string;
   jobType: string;

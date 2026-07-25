@@ -33,7 +33,7 @@ test("public collection APIs preserve sparklines while status stays lightweight"
   }
 });
 
-test("asset detail API still returns the full sparkline", async () => {
+test("asset detail API returns price and stored volume history", async () => {
   const previousMode = process.env.SONITUS_DATA_MODE;
   process.env.SONITUS_DATA_MODE = "mock";
   try {
@@ -45,6 +45,12 @@ test("asset detail API still returns the full sparkline", async () => {
     const payload = await response.json();
     assert.equal(response.status, 200);
     assert.deepEqual(payload.asset.sparkline, source.sparkline);
+    assert.equal(payload.asset.history.length, source.sparkline.length);
+    assert.equal(payload.asset.history.at(-1).price, source.lastPrice);
+    assert.equal(payload.asset.history.at(-1).volume, source.currentVolume);
+    assert.ok(payload.asset.history.every((point: { capturedAt?: string; marketCap?: number }) =>
+      typeof point.capturedAt === "string" && typeof point.marketCap === "number"
+    ));
   } finally {
     if (previousMode === undefined) delete process.env.SONITUS_DATA_MODE;
     else process.env.SONITUS_DATA_MODE = previousMode;
