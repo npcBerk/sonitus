@@ -6,7 +6,7 @@ import { DataUnavailableError } from "./errors";
 import { baseScanJob, getBaseAssets } from "./mock-data";
 import { getPrismaClient } from "./prisma";
 import { readDashboardCache, readSnapshotStatusCache } from "./redis";
-import { isStablecoinIdentity } from "./stablecoins";
+import { isExcludedAssetIdentity } from "./excluded-assets";
 import type {
   Asset,
   AssetDetail,
@@ -187,7 +187,7 @@ export function createDashboardPayload<TAsset extends DashboardAsset>(
   updatedAt: string,
   filters: DashboardFilters = defaultDashboardFilters
 ): DashboardData<TAsset> {
-  const eligible = assets.filter((asset) => !isStablecoinIdentity({ providerId: asset.providerId })).filter(isLiquidityEligible);
+  const eligible = assets.filter((asset) => !isExcludedAssetIdentity({ providerId: asset.providerId })).filter(isLiquidityEligible);
   const filteredAssets = filterAssets(eligible, filters);
   const enriched = enrichAssets(filteredAssets);
   const totalMarketCap = enriched.reduce((sum, asset) => sum + asset.currentMarketCap, 0);
@@ -513,6 +513,6 @@ export async function loadAssetById(id: string): Promise<AssetDetail | null> {
       }
     }
   });
-  if (!record || isStablecoinIdentity({ providerId: record.providerId })) return null;
+  if (!record || isExcludedAssetIdentity({ providerId: record.providerId })) return null;
   return mapAssetRecord({ ...record, metrics: record.metrics.slice().reverse() });
 }

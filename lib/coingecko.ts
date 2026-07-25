@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { getRuntimeConfig } from "./config";
 import { ConfigurationError } from "./errors";
+import { isExcludedAssetIdentity } from "./excluded-assets";
 import { logger } from "./logger";
-import { isStablecoinIdentity } from "./stablecoins";
 
 type CoinGeckoApiMode = "public" | "demo" | "pro";
 
@@ -190,12 +190,12 @@ export async function fetchLiveSnapshot(
 
   const config = getRuntimeConfig();
   const candidateCoins = marketCoins
-    .filter((coin) => !isStablecoinIdentity({ providerId: coin.id }))
+    .filter((coin) => !isExcludedAssetIdentity({ providerId: coin.id }))
     .filter((coin) => (coin.market_cap ?? 0) >= config.minMarketCapUsd && (coin.total_volume ?? 0) >= config.minVolumeUsd)
     .slice(0, candidateLimit);
   const candidateIds = new Set(candidateCoins.map((coin) => coin.id));
   const retainedSeeds = trackedAssets.filter(
-    (asset) => !candidateIds.has(asset.providerId) && !isStablecoinIdentity(asset)
+    (asset) => !candidateIds.has(asset.providerId) && !isExcludedAssetIdentity(asset)
   );
   const retainedRefresh = await fetchMarketCoinsByIds(retainedSeeds.map((asset) => asset.providerId));
   const retainedSeedById = new Map(retainedSeeds.map((asset) => [asset.providerId, asset]));
@@ -223,9 +223,9 @@ export async function fetchLiveSnapshot(
       };
     }
   );
-  const eligibleCoins = mappedCoins.filter((coin) => !isStablecoinIdentity(coin));
+  const eligibleCoins = mappedCoins.filter((coin) => !isExcludedAssetIdentity(coin));
 
-  if (eligibleCoins.length === 0) throw new Error("CoinGecko returned no non-stablecoin assets");
+  if (eligibleCoins.length === 0) throw new Error("CoinGecko returned no eligible assets");
 
   const updatedAt = eligibleCoins.reduce(
     (latest, coin) => (coin.updatedAt > latest ? coin.updatedAt : latest),

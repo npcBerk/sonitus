@@ -135,6 +135,22 @@ test("runtime config scans 250 volume-ranked assets by default and supports an o
   }
 });
 
+test("runtime config defaults to the agreed market eligibility thresholds", () => {
+  const previousMinMarketCap = process.env.MIN_MARKET_CAP_USD;
+  const previousMinVolume = process.env.MIN_VOLUME_USD;
+  try {
+    delete process.env.MIN_MARKET_CAP_USD;
+    delete process.env.MIN_VOLUME_USD;
+    assert.equal(getRuntimeConfig().minMarketCapUsd, 50_000_000);
+    assert.equal(getRuntimeConfig().minVolumeUsd, 10_000_000);
+  } finally {
+    if (previousMinMarketCap === undefined) delete process.env.MIN_MARKET_CAP_USD;
+    else process.env.MIN_MARKET_CAP_USD = previousMinMarketCap;
+    if (previousMinVolume === undefined) delete process.env.MIN_VOLUME_USD;
+    else process.env.MIN_VOLUME_USD = previousMinVolume;
+  }
+});
+
 test("stablecoins are excluded from every dashboard surface and market total", () => {
   const stablecoin: Asset = {
     ...asset,

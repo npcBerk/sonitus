@@ -13,7 +13,10 @@ import {
 import { logger } from "./logger";
 import { baseScanJob, getBaseAssets } from "./mock-data";
 import { writeDashboardCache } from "./redis";
-import { isStablecoinIdentity, KNOWN_STABLECOIN_PROVIDER_IDS } from "./stablecoins";
+import {
+  isExcludedAssetIdentity,
+  KNOWN_EXCLUDED_ASSET_PROVIDER_IDS
+} from "./excluded-assets";
 import type { Asset, DashboardAsset, ScanJob, VolumeBaselineStatus } from "./types";
 
 type SeedOptions = {
@@ -426,11 +429,11 @@ async function bulkUpsertMetrics(tx: Prisma.TransactionClient, metrics: MetricWr
 
 export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSnapshot, existingContext?: ScanContext) {
   if (snapshot.coins.length === 0) throw new Error("Refusing to persist an empty market snapshot");
-  const stablecoinProviderIds = snapshot.coins
-    .filter((coin) => isStablecoinIdentity(coin))
+  const excludedProviderIds = snapshot.coins
+    .filter((coin) => isExcludedAssetIdentity(coin))
     .map((coin) => coin.providerId);
-  const eligibleCoins = snapshot.coins.filter((coin) => !isStablecoinIdentity(coin));
-  if (eligibleCoins.length === 0) throw new Error("Refusing to persist a stablecoin-only market snapshot");
+  const eligibleCoins = snapshot.coins.filter((coin) => !isExcludedAssetIdentity(coin));
+  if (eligibleCoins.length === 0) throw new Error("Refusing to persist a snapshot without eligible assets");
   const providerUpdatedAtById = new Map<string, Date>();
   for (const coin of eligibleCoins) {
     const providerUpdatedAt = new Date(coin.updatedAt);
@@ -456,7 +459,7 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
         await tx.asset.deleteMany({
           where: {
             providerId: {
-              in: Array.from(new Set<string>([...KNOWN_STABLECOIN_PROVIDER_IDS, ...stablecoinProviderIds]))
+              in: Array.from(new Set<string>([...KNOWN_EXCLUDED_ASSET_PROVIDER_IDS, ...excludedProviderIds]))
             }
           }
         });

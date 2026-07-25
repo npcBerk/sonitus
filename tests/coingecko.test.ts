@@ -16,7 +16,7 @@ test("CoinGecko requests preserve the base URL path and validate a live snapshot
     if (url.pathname === "/api/v3/coins/markets") {
       const bitcoin = {
         id: "bitcoin", symbol: "btc", name: "Bitcoin", image: "", current_price: 100,
-        market_cap: 1_000, total_volume: 100, market_cap_rank: 1,
+        market_cap: 50_000_000, total_volume: 10_000_000, market_cap_rank: 1,
         price_change_percentage_1h_in_currency: 1, price_change_percentage_24h_in_currency: 2,
         sparkline_in_7d: { price: [90, 100] }, last_updated: updatedAt
       };
@@ -27,6 +27,13 @@ test("CoinGecko requests preserve the base URL path and validate a live snapshot
         name: "Tether",
         market_cap_rank: 3
       };
+      const weth = {
+        ...bitcoin,
+        id: "weth",
+        symbol: "weth",
+        name: "WETH",
+        market_cap_rank: 4
+      };
       const ethereum = {
         ...bitcoin,
         id: "ethereum",
@@ -34,7 +41,23 @@ test("CoinGecko requests preserve the base URL path and validate a live snapshot
         name: "Ethereum",
         market_cap_rank: 2
       };
-      response.end(JSON.stringify(url.searchParams.has("ids") ? [ethereum] : [tether, bitcoin]));
+      const lowMarketCap = {
+        ...bitcoin,
+        id: "low-market-cap",
+        symbol: "lmc",
+        name: "Low Market Cap",
+        market_cap: 49_999_999
+      };
+      const lowVolume = {
+        ...bitcoin,
+        id: "low-volume",
+        symbol: "lvol",
+        name: "Low Volume",
+        total_volume: 9_999_999
+      };
+      response.end(JSON.stringify(
+        url.searchParams.has("ids") ? [ethereum] : [tether, weth, lowMarketCap, lowVolume, bitcoin]
+      ));
     } else {
       response.statusCode = 404;
       response.end("{}");
@@ -50,16 +73,20 @@ test("CoinGecko requests preserve the base URL path and validate a live snapshot
   const previousMinVolume = process.env.MIN_VOLUME_USD;
   process.env.COINGECKO_BASE_URL = `http://127.0.0.1:${address.port}/api/v3`;
   process.env.COINGECKO_MAX_RETRIES = "0";
-  process.env.MIN_MARKET_CAP_USD = "0";
-  process.env.MIN_VOLUME_USD = "0";
+  process.env.MIN_MARKET_CAP_USD = "50000000";
+  process.env.MIN_VOLUME_USD = "10000000";
   try {
     const snapshot = await fetchLiveSnapshot([
       { providerId: "ethereum", imageUrl: "" },
+      { providerId: "weth", imageUrl: "" },
       { providerId: "missing-retained", imageUrl: "" }
-    ], 1);
+    ], 5);
     assert.equal(snapshot.coins.find((coin) => coin.providerId === "bitcoin")?.isCandidate, true);
     assert.equal(snapshot.coins.find((coin) => coin.providerId === "ethereum")?.isCandidate, false);
     assert.equal(snapshot.coins.some((coin) => coin.providerId === "tether"), false);
+    assert.equal(snapshot.coins.some((coin) => coin.providerId === "weth"), false);
+    assert.equal(snapshot.coins.some((coin) => coin.providerId === "low-market-cap"), false);
+    assert.equal(snapshot.coins.some((coin) => coin.providerId === "low-volume"), false);
     assert.deepEqual(snapshot.staleRetainedProviderIds, ["missing-retained"]);
     assert.ok(requestedPaths.every((path) => path.startsWith("/api/v3/")));
     assert.ok(requestedQueries.some((query) => query.includes("order=volume_desc") && !query.includes("ids=")));

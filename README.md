@@ -10,7 +10,7 @@ Uygulama şu sorulara cevap verir:
 - Hangi varlıklar 1 saat ve 24 saat pencerelerinde en sert hareketi gösteriyor?
 - Hangi varlıkların 24 saatlik hacmi artıyor veya azalıyor?
 
-Mevcut sürüm 24 saatlik spot hacme göre dinamik top 250 adayı tarar. İlk 250'den çıkan varlıklar sert hacim daralmalarını kaçırmamak için 48 saat daha izlenir. Dashboard ilk 25 filtrelenmiş sonucu gösterir ve kalanları isteğe bağlı olarak açar. Stablecoin'ler koruyucu provider denylist'i ile ingestion öncesinde elenir; piyasa tablosuna, toplamlarına, sinyal panellerine ve detay API'lerine dahil edilmez. Dashboard ayrıca varlık detay sayfaları, URL tabanlı arama/filtreleme/sıralama, health paneli, okuma API'leri ve kimlik doğrulamalı manuel scan endpoint'i içerir.
+Mevcut sürüm 24 saatlik spot hacme göre dinamik top 250 adayı tarar. İlk 250'den çıkan varlıklar sert hacim daralmalarını kaçırmamak için 48 saat daha izlenir. Dashboard ilk 25 filtrelenmiş sonucu gösterir ve kalanları isteğe bağlı olarak açar. Stablecoin'ler ile WETH/WBTC, liquid-staking receipt'leri ve benzeri ana varlığı tekrar eden türev temsiller koruyucu provider denylist'i ile ingestion öncesinde elenir; piyasa tablosuna, toplamlarına, sinyal panellerine ve detay API'lerine dahil edilmez. Dashboard ayrıca varlık detay sayfaları, URL tabanlı arama/filtreleme/sıralama, health paneli, okuma API'leri ve kimlik doğrulamalı manuel scan endpoint'i içerir.
 
 ## Gerçek mimari
 
@@ -135,8 +135,8 @@ değişken kullanılmamalıdır.
 | `METRIC_RETENTION_DAYS` | Hayır | Varsayılan `30` |
 | `VOLUME_BASELINE_TOLERANCE_MINUTES` | Hayır | 24 saatlik baseline toleransı; varsayılan `90` |
 | `CANDIDATE_RETENTION_HOURS` | Hayır | Hacim aday listesinden çıkan varlığın takip süresi; varsayılan `48` |
-| `MIN_MARKET_CAP_USD` | Hayır | Aday ve görünür sinyal evreni için minimum market cap; varsayılan `25000000` |
-| `MIN_VOLUME_USD` | Hayır | Güncel veya baseline için minimum hacim; varsayılan `5000000` |
+| `MIN_MARKET_CAP_USD` | Hayır | Aday ve görünür sinyal evreni için minimum market cap; varsayılan `50000000` |
+| `MIN_VOLUME_USD` | Hayır | Güncel veya baseline için minimum hacim; varsayılan `10000000` |
 | `CACHE_TTL_SECONDS` | Hayır | Redis dashboard cache TTL; varsayılan `900` |
 | `COINGECKO_SCAN_LIMIT` | Hayır | Spot 24 saatlik hacme göre dinamik aday sayısı; en fazla ve varsayılan `250` |
 | `COINGECKO_CONCURRENCY` | Hayır | Coin detay istek eşzamanlılığı; varsayılan `4` |
