@@ -92,7 +92,7 @@ export function AssetMarketChart({ history, baselineVolume }: AssetMarketChartPr
 
     const chart = createChart(container, {
       autoSize: true,
-      height: 468,
+      height: 520,
       layout: {
         background: { type: ColorType.Solid, color: "#060b16" },
         textColor: "#7c8ba1",
@@ -130,7 +130,7 @@ export function AssetMarketChart({ history, baselineVolume }: AssetMarketChartPr
         entireTextOnly: true,
         scaleMargins: {
           top: 0.08,
-          bottom: showVolume ? 0.31 : 0.1
+          bottom: 0.08
         }
       },
       leftPriceScale: { visible: false },
@@ -183,13 +183,17 @@ export function AssetMarketChart({ history, baselineVolume }: AssetMarketChartPr
 
     if (showVolume) {
       const volumeSeries = chart.addSeries(HistogramSeries, {
-        priceScaleId: "",
+        title: "VOL",
         priceFormat: { type: "volume" },
         priceLineVisible: false,
-        lastValueVisible: false
-      });
+        lastValueVisible: true
+      }, 1);
       volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.76, bottom: 0 }
+        visible: true,
+        borderVisible: true,
+        borderColor: "rgba(148, 163, 184, 0.16)",
+        entireTextOnly: true,
+        scaleMargins: { top: 0.12, bottom: 0.08 }
       });
       volumeSeries.setData(volumeData);
 
@@ -200,10 +204,14 @@ export function AssetMarketChart({ history, baselineVolume }: AssetMarketChartPr
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
           lineVisible: true,
-          axisLabelVisible: false,
+          axisLabelVisible: true,
           title: "24h baseline"
         });
       }
+
+      const panes = chart.panes();
+      panes[0]?.setStretchFactor(3);
+      panes[1]?.setStretchFactor(1);
     }
 
     const crosshairHandler = (param: { time?: Time }) => {
@@ -304,9 +312,9 @@ export function AssetMarketChart({ history, baselineVolume }: AssetMarketChartPr
 
       <div
         ref={containerRef}
-        className="h-[468px] w-full"
+        className="h-[520px] w-full"
         role="img"
-        aria-label="Interactive price chart with a right-side price scale, bottom time scale, crosshair, zoom, pan, and volume histogram."
+        aria-label="Interactive price chart with a right-side price scale and a separate volume pane with its own readable scale."
       />
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/[0.08] px-3 py-2.5 text-[10px] text-slate-500">
