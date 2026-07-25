@@ -2,7 +2,10 @@
 
 Bu klasörde iki ayrı ve bilinçli çalışma düzeni vardır:
 
-- `compose.mock.yml`: VPS topolojisinin yerel provasıdır. Caddy, Next.js, PostgreSQL ve Redis çalışır; PostgreSQL sahte snapshot ile doldurulur. Worker çalışmaz ve CoinGecko'ya istek atılmaz.
+- `compose.mock.yml`: VPS topolojisinin yerel provasıdır. Caddy, Next.js,
+  PostgreSQL ve Redis çalışır; PostgreSQL ilk volume oluşturulurken
+  `backups/sonitus_20260725T171813Z.dump` production snapshot'ından yüklenir.
+  Worker çalışmaz ve CoinGecko'ya istek atılmaz.
 - `compose.production.yml`: Gerçek VPS düzenidir. Bunlara ek olarak sürekli BullMQ worker, otomatik PostgreSQL backup ve Caddy'nin otomatik HTTPS yönetimi çalışır.
 
 Uzun Compose komutları yerine repository kökünden aşağıdaki yardımcı script'leri
@@ -76,13 +79,24 @@ Durdurmak için:
 docker compose -f deploy/compose.mock.yml down
 ```
 
-`down` veritabanı volume'unu silmez. Tamamen sıfırlamak yalnızca mock ortamında gerekirse `docker compose -f deploy/compose.mock.yml down -v` kullanılır; `-v` kalıcı veriyi siler.
+`down` veritabanı volume'unu silmez; dolayısıyla sonraki `up` işlemlerinde
+snapshot tekrar yüklenmez. Snapshot'ı ilk kez yüklemek veya dosyayı yenisiyle
+değiştirdikten sonra yeniden yüklemek için mock PostgreSQL ve Redis volume'larını
+açık onayla silin:
 
-Mock Compose içindeki tek seferlik `seed` servisi veritabanını bilerek temizler
-ve bu nedenle `ALLOW_DESTRUCTIVE_SEED=true` iznini yalnızca kendi izole
-PostgreSQL container'ına verir. Production Compose seed servisi içermez. Host
-üzerinde `npm run db:seed`, localhost dışındaki bir veritabanını bu açık izin
-olmadan temizlemeyi reddeder.
+```bash
+CONFIRM_RESET=yes ./deploy/docker-mock.sh reset
+./deploy/docker-mock.sh up
+```
+
+Restore, PostgreSQL'in `/docker-entrypoint-initdb.d` başlangıç mekanizmasıyla
+yalnızca boş volume üzerinde çalışır. Ardından `migrate` servisi dump'tan daha
+yeni Prisma migration'larını uygular ve başarılı olursa web servisi başlar.
+Restore sırasında hata oluşursa PostgreSQL sağlıklı duruma geçmez ve web
+başlatılmaz. Dump dosyaları `deploy/backups/` altında tutulur ve Git'e alınmaz.
+
+Production Compose seed servisi içermez. Host üzerinde `npm run db:seed`,
+localhost dışındaki bir veritabanını açık izin olmadan temizlemeyi reddeder.
 
 ## 2. VPS hazırlığı
 
