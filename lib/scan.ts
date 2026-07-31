@@ -7,6 +7,7 @@ import { getBaseAssets } from "./mock-data";
 import { failScanJob, persistLiveSnapshot, startScanJob } from "./persistence";
 import { getPrismaClient } from "./prisma";
 import { acquireMarketScanLock, releaseMarketScanLock } from "./redis";
+import { assertSnapshotFreshness } from "./snapshot-freshness";
 
 function buildMockLiveSnapshot(): LiveSnapshot {
   const assets = getBaseAssets();
@@ -45,7 +46,6 @@ export async function runMarketSnapshotOnce() {
 
   let scan: Awaited<ReturnType<typeof startScanJob>> | null = null;
   try {
-    scan = await startScanJob(prisma);
     const trackedAssets =
       getDataMode() === "database"
         ? await prisma.asset.findMany({
@@ -67,6 +67,9 @@ export async function runMarketSnapshotOnce() {
             }))
           );
     const providerMs = Date.now() - providerStartedAt;
+    const capturedAt = new Date();
+    const freshness = assertSnapshotFreshness(snapshot, capturedAt);
+    scan = await startScanJob(prisma, capturedAt);
     const result = await persistLiveSnapshot(prisma, snapshot, scan);
     const totalMs = Date.now() - totalStartedAt;
     logger.info(
@@ -78,7 +81,9 @@ export async function runMarketSnapshotOnce() {
         cacheMs: result.timings.cacheMs,
         persistenceMs: result.timings.persistenceMs,
         totalMs,
-        cacheBytes: result.timings.cacheBytes
+        cacheBytes: result.timings.cacheBytes,
+        providerUnacceptableAssets: freshness.unacceptableAssets,
+        providerAssetCount: freshness.totalAssets
       },
       "Market snapshot timing"
     );

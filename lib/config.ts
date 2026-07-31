@@ -37,6 +37,8 @@ export function getRuntimeConfig() {
     providerMaxRetries: z.coerce.number().int().min(0).max(6).catch(3).parse(process.env.COINGECKO_MAX_RETRIES),
     cacheTtlSeconds: positiveInteger(900).parse(process.env.CACHE_TTL_SECONDS),
     scanStaleMinutes: positiveInteger(15).parse(process.env.SCAN_STALE_MINUTES),
+    clockFutureToleranceSeconds: positiveInteger(120).parse(process.env.CLOCK_FUTURE_TOLERANCE_SECONDS),
+    providerStaleAbortPercent: z.coerce.number().int().min(1).max(100).catch(50).parse(process.env.PROVIDER_STALE_ABORT_PERCENT),
     scanLockSeconds: positiveInteger(1_200).parse(process.env.SCAN_LOCK_SECONDS),
     metricRetentionDays: positiveInteger(30).parse(process.env.METRIC_RETENTION_DAYS),
     volumeBaselineToleranceMinutes: positiveInteger(90).parse(process.env.VOLUME_BASELINE_TOLERANCE_MINUTES)
@@ -44,6 +46,9 @@ export function getRuntimeConfig() {
 }
 
 export function isSnapshotStale(updatedAt: string) {
+  const config = getRuntimeConfig();
   const timestamp = new Date(updatedAt).getTime();
-  return !Number.isFinite(timestamp) || Date.now() - timestamp > getRuntimeConfig().scanStaleMinutes * 60_000;
+  if (!Number.isFinite(timestamp)) return true;
+  const ageMs = Date.now() - timestamp;
+  return ageMs > config.scanStaleMinutes * 60_000 || ageMs < -config.clockFutureToleranceSeconds * 1_000;
 }

@@ -24,3 +24,21 @@ export class ScanAlreadyRunningError extends Error {
     this.name = "ScanAlreadyRunningError";
   }
 }
+
+export class SnapshotFreshnessError extends Error {
+  readonly code = "SNAPSHOT_FRESHNESS_ERROR";
+
+  constructor(readonly details: {
+    capturedAt: string;
+    latestProviderUpdatedAt: string;
+    totalAssets: number;
+    unacceptableAssets: number;
+    abortPercent: number;
+  }) {
+    super(
+      `Snapshot freshness guard rejected ${details.unacceptableAssets}/${details.totalAssets} assets; ` +
+      `capture=${details.capturedAt}, provider=${details.latestProviderUpdatedAt}.`
+    );
+    this.name = "SnapshotFreshnessError";
+  }
+}

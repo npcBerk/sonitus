@@ -131,6 +131,8 @@ değişken kullanılmamalıdır.
 | `INTERNAL_JOB_TOKEN` | Ingestion/manual scan için | Production'da en az 32 karakter; yalnızca header ile gönderilir |
 | `SCAN_INTERVAL_MINUTES` | Hayır | Docker/BullMQ worker aralığı; varsayılan `5` |
 | `SCAN_STALE_MINUTES` | Hayır | Health ve UI stale eşiği; varsayılan `15` |
+| `CLOCK_FUTURE_TOLERANCE_SECONDS` | Hayır | Gelecekte görünen scan/provider zamanı için izin verilen saat sapması; varsayılan `120` |
+| `PROVIDER_STALE_ABORT_PERCENT` | Hayır | Bu oranda provider zamanı kabul edilemezse snapshot yazımı iptal edilir; varsayılan `%50` |
 | `SCAN_LOCK_SECONDS` | Hayır | Çakışan ingestion'ları engelleyen Redis lock TTL; varsayılan `1200` |
 | `METRIC_RETENTION_DAYS` | Hayır | Varsayılan `30` |
 | `VOLUME_BASELINE_TOLERANCE_MINUTES` | Hayır | 24 saatlik baseline toleransı; varsayılan `90` |

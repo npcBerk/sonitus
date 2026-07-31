@@ -13,6 +13,7 @@ import {
 import { logger } from "./logger";
 import { baseScanJob, getBaseAssets } from "./mock-data";
 import { writeDashboardCache } from "./redis";
+import { assertSnapshotFreshness } from "./snapshot-freshness";
 import {
   isExcludedAssetIdentity,
   KNOWN_EXCLUDED_ASSET_PROVIDER_IDS
@@ -78,8 +79,8 @@ function errorMessage(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, 2_000);
 }
 
-export async function startScanJob(prisma: PrismaClient): Promise<ScanContext> {
-  const context = { id: randomUUID(), startedAt: new Date() };
+export async function startScanJob(prisma: PrismaClient, startedAt = new Date()): Promise<ScanContext> {
+  const context = { id: randomUUID(), startedAt };
   await prisma.scanJob.create({
     data: {
       id: context.id,
@@ -440,7 +441,9 @@ export async function persistLiveSnapshot(prisma: PrismaClient, snapshot: LiveSn
     if (Number.isNaN(providerUpdatedAt.getTime())) throw new Error(`Invalid provider timestamp for ${coin.providerId}`);
     providerUpdatedAtById.set(coin.providerId, providerUpdatedAt);
   }
-  const context = existingContext ?? (await startScanJob(prisma));
+  const capturedAt = existingContext?.startedAt ?? new Date();
+  assertSnapshotFreshness(snapshot, capturedAt);
+  const context = existingContext ?? (await startScanJob(prisma, capturedAt));
   const persistenceStartedAt = Date.now();
 
   try {

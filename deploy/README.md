@@ -279,6 +279,30 @@ En az iki dış alarm kurun:
 
 Health endpoint tek başına sunucunun tamamen erişilemez olmasını içeriden fark edemez; bu yüzden kontrol dışarıdan yapılmalıdır.
 
+### Saat kayması koruması
+
+Worker, snapshot'ı yazmadan önce yerel capture zamanı ile CoinGecko
+`last_updated` zamanlarını karşılaştırır. Varlıkların varsayılan olarak yüzde
+50'si `SCAN_STALE_MINUTES` sınırının dışında kalırsa scan reddedilir; son
+sağlıklı dashboard ve cache korunur. Gelecekteki scan zamanı da
+`CLOCK_FUTURE_TOLERANCE_SECONDS` sınırını aşınca `/api/health` tarafından hata
+sayılır ve endpoint HTTP 503 döner.
+
+Bu uygulama koruması host saatini düzeltmez. VPS üzerinde UTC, NTP ve RTC
+durumunu ayrıca izleyin:
+
+```bash
+date -u
+timedatectl status
+timedatectl timesync-status
+```
+
+Worker logunda `SNAPSHOT_FRESHNESS_ERROR` görülürse önce host saatini doğrulayın.
+Saat doğru hale gelmeden worker'ı tekrar tekrar başlatmayın. Eski sürümün
+geleceğe yazdığı kayıtlar varsa yeni sürüm bunları health'te görünür biçimde
+hata sayar; backup alındıktan sonra gelecekteki `asset_metrics`, `scan_jobs` ve
+dashboard cache kayıtları temizlenmelidir.
+
 ## 7. Güvenli geçiş sırası
 
 1. Yerelde mock compose'u doğrula.
